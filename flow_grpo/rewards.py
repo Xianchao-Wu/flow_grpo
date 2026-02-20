@@ -130,13 +130,14 @@ def ocr_score(device):
 
     scorer = OcrScorer()
 
-    def _fn(images, prompts, metadata):
+    def _fn(images, prompts, metadata): # images.shape=[16, 3, 512, 512], prompts is a list with 16 textual sequences; metadata=[{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}], a list with 16 {} empty dicts
+        #import ipdb; ipdb.set_trace()
         if isinstance(images, torch.Tensor):
-            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy() # from [0, 1] to [0, 255] to be alike real-world images! NOTE
             images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
         scores = scorer(images, prompts)
         # change tensor to list
-        return scores, {}
+        return scores, {} # scores = rewards = [0.44999999999999996, 0.9375, 0.9166666666666666, 0.6, 1.0, 0.15000000000000002, 0.0, 0.16666666666666663, 0.9411764705882353, 0.9411764705882353, 1.0, 0.9545454545454546, 1.0, 0.4285714285714286, 0.8666666666666667, 0.9583333333333334], a batch of 16 text sequences' OCR rewards, no space lowercase edit-distance between "keyword" in prompt and ocr's output in the generated image
 
     return _fn
 
@@ -421,17 +422,19 @@ def multi_score(device, score_dict):
         "geneval": geneval_score,
         "clipscore": clip_score,
         "image_similarity": image_similarity_score,
-    }
+    } # {'deqa': <function deqa_score_remote at 0x7f579fa912d0>, 'ocr': <function ocr_score at 0x7f579fa911b0>, 'video_ocr': <function video_ocr_score at 0x7f579fa91240>, 'imagereward': <function imagereward_score at 0x7f579fa91090>, 'pickscore': <function pickscore_score at 0x7f579fa91000>, 'qwenvl': <function qwenvl_score at 0x7f579fa91120>, 'aesthetic': <function aesthetic_score at 0x7f579fa90e50>, 'jpeg_compressibility': <function jpeg_compressibility at 0x7f579fa90dc0>, 'unifiedreward': <function unifiedreward_score_sglang at 0x7f579fa91480>, 'geneval': <function geneval_score at 0x7f579fa91360>, 'clipscore': <function clip_score at 0x7f579fa90ee0>, 'image_similarity': <function image_similarity_score at 0x7f579fa90f70>} NOTE 都是方法的签名啊
+    #import ipdb; ipdb.set_trace()
     score_fns={}
-    for score_name, weight in score_dict.items():
-        score_fns[score_name] = score_functions[score_name](device) if 'device' in score_functions[score_name].__code__.co_varnames else score_functions[score_name]()
-
+    for score_name, weight in score_dict.items(): # ocr: 1.0
+        score_fns[score_name] = score_functions[score_name](device) if 'device' in score_functions[score_name].__code__.co_varnames else score_functions[score_name]() # TODO NOTE 这个opencv的包，花费了不少时间, paddleocr is a not easy for the usage!
+    #import ipdb; ipdb.set_trace()
     # only_strict is only for geneval. During training, only the strict reward is needed, and non-strict rewards don't need to be computed, reducing reward calculation time.
     def _fn(images, prompts, metadata, ref_images=None, only_strict=True):
+        #import ipdb; ipdb.set_trace() # NOTE 目前已经调用了stable diffusion模型，来生成了images，现在就是通过当前的reward function来对生成的images进行打分的，这个打分很重要！！！
         total_scores = []
         score_details = {}
         
-        for score_name, weight in score_dict.items():
+        for score_name, weight in score_dict.items(): # ocr: 1.0 = score_dict
             if score_name == "geneval":
                 scores, rewards, strict_rewards, group_rewards, group_strict_rewards = score_fns[score_name](images, prompts, metadata, only_strict)
                 score_details['accuracy'] = rewards
@@ -442,18 +445,18 @@ def multi_score(device, score_dict):
                     score_details[f'{key}_accuracy'] = value
             elif score_name == "image_similarity":
                 scores, rewards = score_fns[score_name](images, ref_images)
-            else:
-                scores, rewards = score_fns[score_name](images, prompts, metadata)
+            else: # e.g., 'ocr'
+                scores, rewards = score_fns[score_name](images, prompts, metadata) # NOTE TODO score_fns['ocr'] = <function ocr_score.<locals>._fn at 0x7f66393a7f40>; 
             score_details[score_name] = scores
             weighted_scores = [weight * score for score in scores]
             
             if not total_scores:
-                total_scores = weighted_scores
+                total_scores = weighted_scores # NOTE here
             else:
                 total_scores = [total + weighted for total, weighted in zip(total_scores, weighted_scores)]
         
-        score_details['avg'] = total_scores
-        return score_details, {}
+        score_details['avg'] = total_scores # [0.44999999999999996, 0.9375, 0.9166666666666666, 0.6, 1.0, 0.15000000000000002, 0.0, 0.16666666666666663, 0.9411764705882353, 0.9411764705882353, 1.0, 0.9545454545454546, 1.0, 0.4285714285714286, 0.8666666666666667, 0.9583333333333334]
+        return score_details, {} # score_details={'ocr': [0.44999999999999996, 0.9375, 0.9166666666666666, 0.6, 1.0, 0.15000000000000002, 0.0, 0.16666666666666663, 0.9411764705882353, 0.9411764705882353, 1.0, 0.9545454545454546, 1.0, 0.4285714285714286, 0.8666666666666667, 0.9583333333333334], 'avg': [0.44999999999999996, 0.9375, 0.9166666666666666, 0.6, 1.0, 0.15000000000000002, 0.0, 0.16666666666666663, 0.9411764705882353, 0.9411764705882353, 1.0, 0.9545454545454546, 1.0, 0.4285714285714286, 0.8666666666666667, 0.9583333333333334]}, 'ocr' and 'avg' are the same NOTE
 
     return _fn
 

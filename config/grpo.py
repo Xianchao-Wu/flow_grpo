@@ -442,9 +442,10 @@ def pickscore_sd3_4gpu():
     return config
 
 def general_ocr_sd3_1gpu():
+    import ipdb; ipdb.set_trace()
     gpu_number = 1
     config = compressibility()
-    config.dataset = os.path.join(os.getcwd(), "dataset/ocr")
+    config.dataset = os.path.join(os.getcwd(), "dataset/ocr") # '/workspace/asr/flow_grpo/dataset/ocr'
 
     # sd3.5 medium
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
@@ -479,7 +480,74 @@ def general_ocr_sd3_1gpu():
     config.prompt_fn = "general_ocr"
 
     config.per_prompt_stat_tracking = True
-    return config
+    return config # NOTE 返回结果，参看下面的取值：
+'''
+ipdb> return config
+activation_checkpointing: false
+allow_tf32: true
+dataset: /workspace/asr/flow_grpo/dataset/ocr
+debug: false
+eval_freq: 60
+fsdp_optimizer_offload: false
+logdir: logs
+mixed_precision: fp16
+num_checkpoint_limit: 5
+num_epochs: 100000
+per_prompt_stat_tracking: true
+pretrained:
+  model: stabilityai/stable-diffusion-3.5-medium
+  revision: main
+prompt_fn: general_ocr
+prompt_fn_kwargs: {}
+resolution: 512
+resume_from: null
+reward_fn:
+  ocr: 1.0
+run_name: ''
+sample:
+  batch_size: 8
+  eval_guidance_scale: 4.5
+  eval_num_steps: 40
+  global_std: true
+  guidance_scale: 4.5
+  noise_level: 0.7
+  num_batches_per_epoch: 8
+  num_image_per_prompt: 8
+  num_steps: 10
+  same_latent: false
+  sde_window_range: !!python/tuple
+  - 0
+  - 10
+  sde_window_size: 2
+  test_batch_size: 16
+  train_batch_size: 8
+save_dir: logs/ocr/sd3.5-M
+save_freq: 60
+seed: 42
+train:
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-08
+  adam_weight_decay: 0.0001
+  adv_clip_max: 5
+  batch_size: 8
+  beta: 0.04
+  cfg: true
+  clip_range: 0.0001
+  clip_range_gt: 0.0001
+  clip_range_lt: 0.0001
+  ema: true
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0003
+  lora_path: null
+  max_grad_norm: 1.0
+  num_inner_epochs: 1
+  timestep_fraction: 0.99
+  timestep_shift: 3.0
+  use_8bit_adam: false
+use_lora: true
+
+'''
 
 def pickscore_flux():
     gpu_number=32

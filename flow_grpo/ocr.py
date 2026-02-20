@@ -20,7 +20,7 @@ class OcrScorer:
 
     @torch.no_grad()
     def __call__(self, 
-                images: Union[List[Image.Image], List[np.ndarray]], 
+                images: Union[List[Image.Image], List[np.ndarray]], # [16, 512, 512, 3] 
                 prompts: List[str]) -> torch.Tensor:
         """
         Calculate OCR reward
@@ -28,7 +28,7 @@ class OcrScorer:
         :param prompts: Corresponding target text list
         :return: Reward tensor (CPU)
         """
-        prompts = [prompt.split('"')[1] for prompt in prompts]
+        prompts = [prompt.split('"')[1] for prompt in prompts] # NOTE 很重要，这个 就是提取prompt中的"abc"的部分，因为只有双引号里面的内容，才需要让图片绘制出来！然后ocr看的就是这个内容！！！ great! ['Spring Collection 2024', 'Step Goal Achieved', 'Forever Yours', 'Try Our New Burger', 'Lost City Near', 'Tonight Binary StandUp', 'Fearless', 'Loved And Remembered', 'Upgrades Available', 'Gas Next Exit 2 Miles', 'Elevation 8000 Feet', 'Private Property No Entry', 'AI Training Zone', 'Abandon All Hope', 'Black Diamond Run', 'Trespassers Will Be Jousted']
         rewards = []
         # Ensure input lengths are consistent
         assert len(images) == len(prompts), "Images and prompts must have the same length"
@@ -39,16 +39,16 @@ class OcrScorer:
             
             try:
                 # OCR recognition
-                result = self.ocr.ocr(img, cls=False)
+                result = self.ocr.ocr(img, cls=False) # NOTE TODO perform the ocr here!
                 # Extract recognized text (handle possible multi-line results)
                 recognized_text = ''.join([res[1][0] if res[1][1] > 0 else '' for res in result[0]]) if result[0] else ''
                 
-                recognized_text = recognized_text.replace(' ', '').lower()
-                prompt = prompt.replace(' ', '').lower()
+                recognized_text = recognized_text.replace(' ', '').lower() # 'SPRING CSPNG COLCN' -> 'springcspngcolcn'
+                prompt = prompt.replace(' ', '').lower() # 'Spring Collection 2024' -> 'springcollection2024'
                 if prompt in recognized_text:
                     dist = 0
                 else:
-                    dist = distance(recognized_text, prompt)
+                    dist = distance(recognized_text, prompt) # edit distance! NOTE
                 # Recognized many unrelated characters, only add one character penalty
                 if dist > len(prompt):
                     dist = len(prompt)
@@ -57,7 +57,7 @@ class OcrScorer:
                 # Error handling (e.g., OCR parsing failure)
                 print(f"OCR processing failed: {str(e)}")
                 dist = len(prompt)  # Maximum penalty
-            reward = 1-dist/(len(prompt))
+            reward = 1-dist/(len(prompt)) # NOTE 1 - 11/20 = 0.45
             rewards.append(reward)
 
         return rewards

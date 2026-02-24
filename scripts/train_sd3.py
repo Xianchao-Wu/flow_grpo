@@ -177,23 +177,23 @@ def create_generator(prompts, base_seed):
         gen = torch.Generator().manual_seed(seed)
         generators.append(gen)
     return generators
-
-        
+# sample.keys() = dict_keys(['prompt_embeds', 'pooled_prompt_embeds', 'timesteps', 'latents', 'next_latents', 'log_probs', 'advantages']); j=0; embeds.shape=[16, 205, 4096]; pooled_embeds.shape=[16, 2048]; config: <class 'ml_collections.config_dict.config_dict.ConfigDict'> 完整的配置文件信息
 def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config):
+    #import ipdb; ipdb.set_trace()
     if config.train.cfg:
         noise_pred = transformer(
-            hidden_states=torch.cat([sample["latents"][:, j]] * 2),
-            timestep=torch.cat([sample["timesteps"][:, j]] * 2),
-            encoder_hidden_states=embeds,
-            pooled_projections=pooled_embeds,
+            hidden_states=torch.cat([sample["latents"][:, j]] * 2), # noisy input
+            timestep=torch.cat([sample["timesteps"][:, j]] * 2), # timestep
+            encoder_hidden_states=embeds, # textual prompt's embedding
+            pooled_projections=pooled_embeds, # textual prompt's pooled embedding
             return_dict=False,
-        )[0]
+        )[0] # noise_pred = predicted velocity field
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
         noise_pred = (
             noise_pred_uncond
             + config.sample.guidance_scale
             * (noise_pred_text - noise_pred_uncond)
-        )
+        ) # velocity field mixture of between conditional and un-conditional NOTE
     else:
         noise_pred = transformer(
             hidden_states=sample["latents"][:, j],
@@ -202,21 +202,21 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
             pooled_projections=pooled_embeds,
             return_dict=False,
         )[0]
-    
+    #import ipdb; ipdb.set_trace() 
     # compute the log prob of next_latents given latents under the current model
     prev_sample, log_prob, prev_sample_mean, std_dev_t = sde_step_with_logprob(
         pipeline.scheduler,
-        noise_pred.float(),
-        sample["timesteps"][:, j],
-        sample["latents"][:, j].float(),
-        prev_sample=sample["next_latents"][:, j].float(),
-        noise_level=config.sample.noise_level,
+        noise_pred.float(), # predicted velocity field
+        sample["timesteps"][:, j], # time
+        sample["latents"][:, j].float(), # noisy audio input of time t
+        prev_sample=sample["next_latents"][:, j].float(), # predicted noisy audio 'output' of time t-1
+        noise_level=config.sample.noise_level, # 0.7
     )
 
     return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
 def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters):
-    #import ipdb; ipdb.set_trace()
+    import ipdb; ipdb.set_trace()
     if config.train.ema: # True
         ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
     neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings([""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device)
@@ -262,11 +262,11 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
                     noise_level=0,
                 ) # 这个文生图的方法，是40步迭代。output images.shape=[16, 3, 512=height, 512=width]
         #import ipdb; ipdb.set_trace()
-        # TODO
+        # TODO 学习代码的时候，是直接用下面的，可以看清楚reward_fn， ocr，的逻辑细节。' ' -> ''，然后用edit distance来计算图片中识别出来的ocr的文字，和prompt中的“”双引号里面的文本内容进行的对比
         #rewards = reward_fn(images, prompts, prompt_metadata, only_strict=False)
 
         #import ipdb; ipdb.set_trace()
-        rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=False)
+        rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=False) # images.shape=[16, 3, 512, 512] after ode and sde! final denoised images with a batch size=16
         # yield to to make sure reward computation starts
         time.sleep(0)
         rewards, reward_metadata = rewards.result()
@@ -275,7 +275,7 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
             rewards_gather = accelerator.gather(torch.as_tensor(value, device=accelerator.device)).cpu().numpy()
             all_rewards[key].append(rewards_gather)
         break # NOTE TODO for debug only and we only look at one batch
-    #import ipdb; ipdb.set_trace() 
+    import ipdb; ipdb.set_trace() 
     last_batch_images_gather = accelerator.gather(torch.as_tensor(images, device=accelerator.device)).cpu().numpy() # [16, 3, 512, 512]
     last_batch_prompt_ids = tokenizers[0](
         prompts,
@@ -382,7 +382,7 @@ def main(_):
 
     # set seed (device_specific is very important to get different prompts on different devices)
     set_seed(config.seed, device_specific=True)
-    #import ipdb; ipdb.set_trace()
+    import ipdb; ipdb.set_trace()
     # load scheduler, tokenizer and models.
     pipeline = StableDiffusion3Pipeline.from_pretrained(
         #config.pretrained.model # 'stabilityai/stable-diffusion-3.5-medium' # TODO NOTE
@@ -394,7 +394,7 @@ def main(_):
     pipeline.text_encoder_2.requires_grad_(False) # 694,659,840 = 694.6M parameters
     pipeline.text_encoder_3.requires_grad_(False) # 4,762,310,656 = 4.7B parameters, which is big
     pipeline.transformer.requires_grad_(not config.use_lora) # 2,243,171,520 = 2.2B parameters, which is alike middle size! NOTE 当使用lora的时候，transformer的参数不需要梯度；如果不使用lora，则transformer的参数是需要梯度的，也就是需要更新transformer中的参数来做grpo！所以说，现在的grpo，就是为了训练下面的这些lora中的low ranker adapter weight matrices的这些参数！ 后续需要知道他们的大小是多少
-
+    import ipdb; ipdb.set_trace()
     text_encoders = [pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3]
     tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3]
 
@@ -480,9 +480,9 @@ def main(_):
         weight_decay=config.train.adam_weight_decay, # 0.0001
         eps=config.train.adam_epsilon, # 1e-08
     )
-    #import ipdb; ipdb.set_trace()
+    import ipdb; ipdb.set_trace()
     # prepare prompt and reward fn
-    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn) # ocr: 1.0
+    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn) # ocr: 1.0 <function multi_score.<locals>._fn at 0x7f96d7445f30>
     eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn) # ocr: 1.0
 
     if config.prompt_fn == "general_ocr": # True
@@ -547,7 +547,7 @@ def main(_):
     else:
         raise NotImplementedError("Only general_ocr is supported with dataset")
 
-
+    import ipdb; ipdb.set_trace()
     neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings([""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device) # NOTE neg_prompt_embed.shape=[1, 205, 4096], neg_pooled_prompt_embed.shape=[1, 2048]
 
     sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.train_batch_size, 1, 1) # [8, 205, 4096]
@@ -610,13 +610,13 @@ def main(_):
 
     while True:
         #################### EVAL ####################
-        #import ipdb; ipdb.set_trace()
+        import ipdb; ipdb.set_trace()
         pipeline.transformer.eval()
         if epoch % config.eval_freq == 0: # 0 % 60 == 0 yes
             eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, eval_reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters)
         if epoch % config.save_freq == 0 and epoch > 0 and accelerator.is_main_process:
-            save_ckpt(config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config)
-        #import ipdb; ipdb.set_trace()
+            save_ckpt(config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config) # config.save_dir='logs/ocr/sd3.5-M'
+        import ipdb; ipdb.set_trace()
         #################### SAMPLING ####################
         pipeline.transformer.eval()
         samples = []
@@ -629,7 +629,7 @@ def main(_):
         ):
             train_sampler.set_epoch(epoch * config.sample.num_batches_per_epoch + i)
             prompts, prompt_metadata = next(train_iter) # prompts=a list of 8 textual sequences; prompt_metadata=[{}, {}, {}, {}, {}, {}, {}, {}]
-            #import ipdb; ipdb.set_trace()
+            import ipdb; ipdb.set_trace()
             prompt_embeds, pooled_prompt_embeds = compute_text_embeddings(
                 prompts, 
                 text_encoders, # 3 encoders
@@ -652,8 +652,8 @@ def main(_):
                 generator = None
             with autocast():
                 with torch.no_grad():
-                    #import ipdb; ipdb.set_trace()
-                    images, latents, log_probs = pipeline_with_logprob( # NOTE
+                    import ipdb; ipdb.set_trace()
+                    images, latents, log_probs = pipeline_with_logprob( # NOTE TODO
                         pipeline,
                         prompt_embeds=prompt_embeds, # [8, 205, 4096]
                         pooled_prompt_embeds=pooled_prompt_embeds, # [8, 2048]
@@ -670,12 +670,12 @@ def main(_):
 
             latents = torch.stack(
                 latents, dim=1
-            )  # (batch_size, num_steps + 1, 16, 96, 96)
-            log_probs = torch.stack(log_probs, dim=1)  # shape after stack (batch_size, num_steps)
+            )  # (batch_size, num_steps + 1, 16, 96, 96), e.g., [8, 11, 16, 64, 64]
+            log_probs = torch.stack(log_probs, dim=1)  # shape after stack (batch_size, num_steps), [8, 10]
 
             timesteps = pipeline.scheduler.timesteps.repeat(
                 config.sample.train_batch_size, 1
-            )  # (batch_size, num_steps)
+            )  # (batch_size, num_steps), e.g., [8, 10]
 
             # compute rewards asynchronously
             rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=True)
@@ -684,10 +684,10 @@ def main(_):
 
             samples.append(
                 {
-                    "prompt_ids": prompt_ids,
-                    "prompt_embeds": prompt_embeds,
-                    "pooled_prompt_embeds": pooled_prompt_embeds,
-                    "timesteps": timesteps,
+                    "prompt_ids": prompt_ids, # tensor([[49406,   320, 23187,  ..., 49407, 49407, 49407], [8, 256]
+                    "prompt_embeds": prompt_embeds, # [8, 205, 4096]
+                    "pooled_prompt_embeds": pooled_prompt_embeds, # [8, 2048]
+                    "timesteps": timesteps, # [8, 10]
                     "latents": latents[
                         :, :-1
                     ],  # each entry is the latent before timestep t
@@ -698,20 +698,20 @@ def main(_):
                     "rewards": rewards,
                 }
             )
-        #import ipdb; ipdb.set_trace()
+        import ipdb; ipdb.set_trace()
         # wait for all rewards to be computed
         for sample in tqdm(
-            samples,
+            samples, # 8 batches in total, each batch is with 8 sequences. NOTE
             desc="Waiting for rewards",
             disable=not accelerator.is_local_main_process,
             position=0,
         ):
-            rewards, reward_metadata = sample["rewards"].result()
+            rewards, reward_metadata = sample["rewards"].result() # NOTE 这里就有取值了; {'ocr': [0.050000000000000044, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.30000000000000004], 'avg': [0.050000000000000044, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.30000000000000004]}; reward_metadata={}
             # accelerator.print(reward_metadata)
             sample["rewards"] = {
                 key: torch.as_tensor(value, device=accelerator.device).float()
                 for key, value in rewards.items()
-            }
+            } # 普通的list，转成了tensor
 
         # collate samples into dict where each entry has shape (num_batches_per_epoch * sample.batch_size, ...)
         samples = {
@@ -722,7 +722,7 @@ def main(_):
                 for sub_key in samples[0][k]
             }
             for k in samples[0].keys()
-        }
+        } # NOTE 绝了, samples['prompt_ids'].shape=[64, 256]
 
         if epoch % 10 == 0 and accelerator.is_main_process:
             # this is a hack to force wandb to log the images as JPEGs instead of PNGs
@@ -731,12 +731,12 @@ def main(_):
                 sample_indices = random.sample(range(len(images)), num_samples)
 
                 for idx, i in enumerate(sample_indices):
-                    image = images[i]
+                    image = images[i] # [3, 512, 512]
                     pil = Image.fromarray(
                         (image.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
                     )
                     pil = pil.resize((config.resolution, config.resolution))
-                    pil.save(os.path.join(tmpdir, f"{idx}.jpg"))  # 使用新的索引
+                    pil.save(os.path.join(tmpdir, f"{idx}.jpg"))  # 使用新的索引; tmpdir='/tmp/tmph100l8rw' NOTE 这是把生成的图片保存到硬盘了
 
                 sampled_prompts = [prompts[i] for i in sample_indices]
                 sampled_rewards = [rewards['avg'][i] for i in sample_indices]
@@ -753,9 +753,9 @@ def main(_):
                     },
                     step=global_step,
                 )
-        samples["rewards"]["ori_avg"] = samples["rewards"]["avg"]
+        samples["rewards"]["ori_avg"] = samples["rewards"]["avg"] # shape=[64], 'avg' is same with 'ocr'
         # The purpose of repeating `adv` along the timestep dimension here is to make it easier to introduce timestep-dependent advantages later, such as adding a KL reward.
-        samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps)
+        samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps) # num_train_timesteps = 9, so samples['rewards']['avg'].shape=[64, 9]
         # gather rewards across processes
         gathered_rewards = {key: accelerator.gather(value) for key, value in samples["rewards"].items()}
         gathered_rewards = {key: value.cpu().numpy() for key, value in gathered_rewards.items()}
@@ -770,16 +770,16 @@ def main(_):
             )
 
         # per-prompt mean/std tracking
-        if config.per_prompt_stat_tracking:
+        if config.per_prompt_stat_tracking: # True
             # gather the prompts across processes
-            prompt_ids = accelerator.gather(samples["prompt_ids"]).cpu().numpy()
+            prompt_ids = accelerator.gather(samples["prompt_ids"]).cpu().numpy() # [64, 256]
             prompts = pipeline.tokenizer.batch_decode(
                 prompt_ids, skip_special_tokens=True
             )
-            advantages = stat_tracker.update(prompts, gathered_rewards['avg'])
+            advantages = stat_tracker.update(prompts, gathered_rewards['avg']) # [64, 9]
             if accelerator.is_local_main_process:
-                print("len(prompts)", len(prompts))
-                print("len unique prompts", len(set(prompts)))
+                print("len(prompts)", len(prompts)) # 64
+                print("len unique prompts", len(set(prompts))) # 5
 
             group_size, trained_prompt_num = stat_tracker.get_stats()
 
@@ -800,7 +800,7 @@ def main(_):
             advantages = (gathered_rewards['avg'] - gathered_rewards['avg'].mean()) / (gathered_rewards['avg'].std() + 1e-4)
 
         # ungather advantages; we only need to keep the entries corresponding to the samples on this process
-        advantages = torch.as_tensor(advantages)
+        advantages = torch.as_tensor(advantages) # [64, 9], 9步都是一样的取值结果
         samples["advantages"] = (
             advantages.reshape(accelerator.num_processes, -1, advantages.shape[-1])[accelerator.process_index]
             .to(accelerator.device)
@@ -812,7 +812,7 @@ def main(_):
         del samples["prompt_ids"]
 
         # Get the mask for samples where all advantages are zero across the time dimension
-        mask = (samples["advantages"].abs().sum(dim=1) != 0)
+        mask = (samples["advantages"].abs().sum(dim=1) != 0) # [64] all True
         
         # If the number of True values in mask is not divisible by config.sample.num_batches_per_epoch,
         # randomly change some False values to True to make it divisible
@@ -832,9 +832,9 @@ def main(_):
                 step=global_step,
             )
         # Filter out samples where the entire time dimension of advantages is zero
-        samples = {k: v[mask] for k, v in samples.items()}
+        samples = {k: v[mask] for k, v in samples.items()} # dict_keys(['prompt_embeds', 'pooled_prompt_embeds', 'timesteps', 'latents', 'next_latents', 'log_probs', 'advantages'])
 
-        total_batch_size, num_timesteps = samples["timesteps"].shape
+        total_batch_size, num_timesteps = samples["timesteps"].shape # 64, 10; for example         [1000.0000,  960.1293,  913.3490,  857.6923,  790.3683,  707.2785,           602.1506,  464.8760,  278.0488,    8.9286]], device='cuda:0')
         # assert (
         #     total_batch_size
         #     == config.sample.train_batch_size * config.sample.num_batches_per_epoch
@@ -842,9 +842,9 @@ def main(_):
         assert num_timesteps == config.sample.num_steps
 
         #################### TRAINING ####################
-        for inner_epoch in range(config.train.num_inner_epochs):
+        for inner_epoch in range(config.train.num_inner_epochs): # config.train.num_inner_epochs=1
             # shuffle samples along batch dimension
-            perm = torch.randperm(total_batch_size, device=accelerator.device)
+            perm = torch.randperm(total_batch_size, device=accelerator.device) # Returns a random permutation of integers from 0 to n - 1 随机生成一个排列 0 to 63
             samples = {k: v[perm] for k, v in samples.items()}
 
             # rebatch for training
@@ -872,50 +872,73 @@ def main(_):
                     # concat negative prompts to sample prompts to avoid two forward passes
                     embeds = torch.cat(
                         [train_neg_prompt_embeds[:len(sample["prompt_embeds"])], sample["prompt_embeds"]]
-                    )
+                    ) # embeds.shape=[16, 205, 4096]
                     pooled_embeds = torch.cat(
                         [train_neg_pooled_prompt_embeds[:len(sample["pooled_prompt_embeds"])], sample["pooled_prompt_embeds"]]
-                    )
+                    ) # pooled_embeds.shape=[16, 2048]
                 else:
                     embeds = sample["prompt_embeds"]
                     pooled_embeds = sample["pooled_prompt_embeds"]
 
                 train_timesteps = [step_index  for step_index in range(num_train_timesteps)]
                 for j in tqdm(
-                    train_timesteps,
+                    train_timesteps, # [0, 1, 2, 3, 4, 5, 6, 7, 8]
                     desc="Timestep",
                     position=1,
                     leave=False,
                     disable=not accelerator.is_local_main_process,
                 ):
                     with accelerator.accumulate(transformer):
-                        with autocast():
+                        with autocast(): # 在这个代码块里面，PyTorch 自动帮你选择用半精度还是单精度计算。自动判断，更稳定.
                             import ipdb; ipdb.set_trace()
-                            prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config)
+                            prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config) # transformer=<class 'peft.peft_model.PeftModel'>, diffusion.model.pipeline, NOTE 
                             if config.train.beta > 0:
                                 with torch.no_grad():
-                                    with transformer.module.disable_adapter():
-                                        _, _, prev_sample_mean_ref, _ = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config)
+                                    # NOTE TODO
+                                    import ipdb; ipdb.set_trace()
+                                    # old: with transformer.module.disable_adapter():
+                                    base_model = transformer.module if hasattr(transformer, "module") else transformer
+                                    with base_model.disable_adapter(): # NOTE 不用lora adapters是区分的关键了！！！ 这个非常重要
+                                        _, _, prev_sample_mean_ref, _ = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config) # NOTE TODO why same inputs as line 894??? --> 因为这里禁止了adapter的使用了，从而transformer/pipeline都回到了最初的样子了!!! TODO 没有看到disable_adapter的效果啊，因为prev_sample_mean 和prev_sample_mean_ref是一样的取值... why? prev_sample_mean == prev_sample_mean_ref is true... ipdb> alist = list(transformer.base_model.model.transformer_blocks[0].attn.to_q.lora_A.parameters()) 有意思，这里是有取值的!!! NOTE
 
                         import ipdb; ipdb.set_trace()
+                        '''
+                        ipdb> sample['advantages'] output of OCR edit distance, same for all the 9 steps...?
+                        tensor([[-0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461,
+                                 -0.2461],
+                                [-0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461,
+                                 -0.2461],
+                                [-0.5828, -0.5828, -0.5828, -0.5828, -0.5828, -0.5828, -0.5828, -0.5828,
+                                 -0.5828],
+                                [-0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461,
+                                 -0.2461],
+                                [ 0.1151,  0.1151,  0.1151,  0.1151,  0.1151,  0.1151,  0.1151,  0.1151,
+                                  0.1151],
+                                [ 0.1480,  0.1480,  0.1480,  0.1480,  0.1480,  0.1480,  0.1480,  0.1480,
+                                  0.1480],
+                                [ 0.1480,  0.1480,  0.1480,  0.1480,  0.1480,  0.1480,  0.1480,  0.1480,
+                                  0.1480],
+                                [ 1.8994,  1.8994,  1.8994,  1.8994,  1.8994,  1.8994,  1.8994,  1.8994,
+                                  1.8994]], device='cuda:0', dtype=torch.float64)
+                        '''
                         # grpo logic
                         advantages = torch.clamp(
                             sample["advantages"][:, j],
-                            -config.train.adv_clip_max,
-                            config.train.adv_clip_max,
-                        )
-                        ratio = torch.exp(log_prob - sample["log_probs"][:, j])
+                            -config.train.adv_clip_max, # -5
+                            config.train.adv_clip_max, # 5
+                        ) # tensor([-0.2461, -0.2461, -0.5828, -0.2461,  0.1151,  0.1480,  0.1480,  1.8994], = advantages
+                        ratio = torch.exp(log_prob - sample["log_probs"][:, j]) # tensor([1., 1., 1., 1., 1., 1., 1., 1.], device='cuda:0', ratio=prob.new / prob.ref = p_theta/p_theta_old, NOTE flow-grpo paper's page 4's r_t^i(\theta)'s definition
                         unclipped_loss = -advantages * ratio
                         clipped_loss = -advantages * torch.clamp(
                             ratio,
-                            1.0 - config.train.clip_range,
+                            1.0 - config.train.clip_range, # 1.0 - 0.0001
                             1.0 + config.train.clip_range,
                         )
                         policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                        if config.train.beta > 0:
+                        if config.train.beta > 0: # 0.04， KL的系数 beta
                             kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
                             kl_loss = torch.mean(kl_loss)
-                            loss = policy_loss + config.train.beta * kl_loss
+                            loss = policy_loss + config.train.beta * kl_loss # NOTE TODO 这个很重要, tensor(-0.1237, device='cuda:0', dtype=torch.float64, grad_fn=<AddBackward0>)
                         else:
                             loss = policy_loss
 

@@ -39,7 +39,7 @@ def pipeline_with_logprob(
 ):
     height = height or self.default_sample_size * self.vae_scale_factor # 512
     width = width or self.default_sample_size * self.vae_scale_factor # 512
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     # 1. Check inputs. Raise error if not correct
     self.check_inputs(
         prompt,
@@ -106,17 +106,17 @@ def pipeline_with_logprob(
 
     # 4. Prepare latent variables
     num_channels_latents = self.transformer.config.in_channels # 16
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace() # /usr/local/lib/python3.10/dist-packages/diffusers/pipelines/stable_diffusion_3/pipeline_stable_diffusion_3.py NOTE
     latents = self.prepare_latents( # NOTE TODO
-        batch_size * num_images_per_prompt,
-        num_channels_latents,
-        height,
-        width,
-        prompt_embeds.dtype,
-        device,
-        generator,
-        latents,
-    ).float() # tensor, latents.shape=[8, 16, 64, 64]
+        batch_size * num_images_per_prompt, # 16 * 1
+        num_channels_latents, # 16
+        height, # 512
+        width, # 512
+        prompt_embeds.dtype, # torch.float16
+        device, # device(type='cuda', index=0)
+        generator, # None
+        latents, # None
+    ).float() # tensor, latents.shape=[8, 16, 64, 64] # Pure Noise NOTE vae.factor=8, so 8*64=512 for height and then 8*16=512 for width
 
     # 5. Prepare timesteps
     scheduler_kwargs = {}
@@ -126,9 +126,9 @@ def pipeline_with_logprob(
         device,
         sigmas=sigmas,
         **scheduler_kwargs,
-    ) # timesteps=tensor([1000.0000,  960.1293,  913.3490,  857.6923,  790.3683,  707.2785, ...          602.1506,  464.8760,  278.0488,    8.9286], device='cuda:0'); num_inference_steps=10
-    num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
-    self._num_timesteps = len(timesteps)
+    ) # timesteps=tensor([1000.0000,  960.1293,  913.3490,  857.6923,  790.3683,  707.2785, ...          602.1506,  464.8760,  278.0488,    8.9286], device='cuda:0'); num_inference_steps=10 or 40?
+    num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0) # 40-40=0
+    self._num_timesteps = len(timesteps) # 40
 
     # 6. Prepare image embeddings
     all_latents = [latents]
@@ -137,37 +137,37 @@ def pipeline_with_logprob(
 
     # 7. Denoising loop
     with self.progress_bar(total=num_inference_steps) as progress_bar:
-        for i, t in enumerate(timesteps):
+        for i, t in enumerate(timesteps): # NOTE t is from big to small! 1000 to 8.9
             if self.interrupt: # False
                 continue
 
             # expand the latents if we are doing classifier free guidance
-            latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents # [8, 16, 64, 64] -> [16, 16, 64, 64]
+            latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents # [8, 16, 64, 64] -> [16, 16, 64, 64], Pure noise NOTE 或者是前一步timestep的输出结果
             # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
             timestep = t.expand(latent_model_input.shape[0]) # 这是一个时间点，扩充到16个，8个cfg，八个condition
             noise_pred = self.transformer(
-                hidden_states=latent_model_input, # NOTE
-                timestep=timestep, # [16]
-                encoder_hidden_states=prompt_embeds, # [16, 205, 4096]
-                pooled_projections=pooled_prompt_embeds, # [16, 2048]
+                hidden_states=latent_model_input, # NOTE 纯噪声图片, 或者前一个time的noise_pred
+                timestep=timestep, # [16] 一个具体的时间戳，做一步去噪
+                encoder_hidden_states=prompt_embeds, # [16, 205, 4096] 文本提示
+                pooled_projections=pooled_prompt_embeds, # [16, 2048] 和文本提示相关的
                 joint_attention_kwargs=self.joint_attention_kwargs, # None
                 return_dict=False,
             )[0] # <class 'peft.peft_model.PeftModel'> output noise_pred.shape=[16, 16, 64, 64]
             # noise_pred = noise_pred.to(prompt_embeds.dtype)
             # perform guidance
             if self.do_classifier_free_guidance: # True
-                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2) # 无条件的预测结果，有条件的预测结果
+                noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond) # 两者的一个线性组合，self.guidance_scale=4.5 okay
                 # NOTE, self.guidance_scale=4.5
             latents_dtype = latents.dtype # torch.float32
-            import ipdb; ipdb.set_trace()
+            #import ipdb; ipdb.set_trace()
             latents, log_prob, prev_latents_mean, std_dev_t = sde_step_with_logprob(
                 self.scheduler, # NOTE  1: FlowMatchEulerDiscreteScheduler, 
-                noise_pred.float(), # 2: [16, 16, 64, 64]
+                noise_pred.float(), # 2: [16, 16, 64, 64], 这是前一步transformer预测出来的，一步去噪之后的，噪声图片
                 t.unsqueeze(0), # 3: tensor(1000., device='cuda:0') 注意，这是一个具体的时间点！
-                latents.float(), # 4: [16, 16, 64, 64]
+                latents.float(), # 4: [16, 16, 64, 64], former step's noisy image
                 noise_level=noise_level, # 5: 0.7
-            ) # NOTE TODO sde step
+            ) # NOTE TODO sde step 'latents' is updated to be the next denoised noisy image tensor! latents=经过sde之后拿到的新的t-1时刻的noisy image, log_prob是对数prob，里面也有mean, variance； prev_latents_mean = x_{t-1}的mean，然后std_dev_t是sqrt(sigma/1-sigma)，也是关于x_t-1的分布的
             
             all_latents.append(latents)
             all_log_probs.append(log_prob)
@@ -179,14 +179,16 @@ def pipeline_with_logprob(
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                 progress_bar.update()
 
+    #import ipdb; ipdb.set_trace()
     latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
     latents = latents.to(dtype=self.vae.dtype)
-    image = self.vae.decode(latents, return_dict=False)[0]
+    image = self.vae.decode(latents, return_dict=False)[0] # [16, 16, 64, 64] -> vae.decode -> [16, 3, 512, 512] 
     image = self.image_processor.postprocess(image, output_type=output_type)
 
     # Offload all models
     self.maybe_free_model_hooks()
 
-    if return_prev_sample_mean:
+    if return_prev_sample_mean: # False
         return image, all_latents, all_log_probs, all_prev_latents_mean
     return image, all_latents, all_log_probs
+

@@ -83,7 +83,7 @@ def _encode_prompt_with_clip(
 
     prompt_embeds = text_encoder(text_input_ids.to(device), output_hidden_states=True)
 
-    pooled_prompt_embeds = prompt_embeds[0]
+    pooled_prompt_embeds = prompt_embeds[0] # NOTE TODO <CLS>对应的vector
     prompt_embeds = prompt_embeds.hidden_states[-2]
     prompt_embeds = prompt_embeds.to(dtype=text_encoder.dtype, device=device)
 

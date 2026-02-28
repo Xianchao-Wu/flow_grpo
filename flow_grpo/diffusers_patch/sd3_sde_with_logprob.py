@@ -33,7 +33,7 @@ def sde_step_with_logprob(
             A random number generator.
     """
     # bf16 can overflow here when compute prev_sample_mean, we must convert all variable to fp32
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     model_output=model_output.float() # 来自现在timestep时刻的flow matching model的预测结果，noisy image
     sample=sample.float() # NOTE TODO ? 输入, sample + t --> self.transformer --> model_output/velocity
     if prev_sample is not None:
@@ -55,10 +55,10 @@ def sde_step_with_logprob(
 
         if prev_sample is None: # None, in
             variance_noise = randn_tensor(
-                model_output.shape,
-                generator=generator,
-                device=model_output.device,
-                dtype=model_output.dtype,
+                model_output.shape, # torch.Size([16, 16, 64, 64])
+                generator=generator, # None
+                device=model_output.device, # device(type='cuda', index=0)
+                dtype=model_output.dtype, # torch.float32
             ) # variance_noise.shape=[8, 16, 64, 64] = epsilon
             prev_sample = prev_sample_mean + std_dev_t * torch.sqrt(-1*dt) * variance_noise # NOTE 
             # x_{t+dt}  = x_t +               g(x_t, t) *     sqrt(dt)     * epsilon 
@@ -71,7 +71,7 @@ def sde_step_with_logprob(
             - torch.log(torch.sqrt(2 * torch.as_tensor(math.pi)))
         ) # log_prob.shape=[8, 16, 64, 64]
         # p(x_{t+dt} | x_t) = N(x_t + f*dt, g^2*dt)
-        # logp = -(x-mu)^2/(2*sigma^2) - log(sigma) - 1/2*log(2*pi)
+        # logp = -(x-mu)^2/(2*sigma^2) - log(sigma) - 1/2*log(2*pi), here, mu=prev_sample_mean, sigma=std_dev_t * sqrt(-dt) NOTE
         # NOTE std_dev_t=0, so log_prob=nan, TODO shall we do something???
     elif sde_type == 'cps': # consistency policy sampling (cps)
         std_dev_t = sigma_prev  * math.sin(noise_level * math.pi / 2) # sigma_t in paper

@@ -136,8 +136,8 @@ def calculate_zero_std_ratio(prompts, gathered_rewards):
     Calculate the proportion of unique prompts whose reward standard deviation is zero.
     
     Args:
-        prompts: List of prompts.
-        gathered_rewards: Dictionary containing rewards, must include the key 'ori_avg'.
+        prompts: List of prompts. len=64
+        gathered_rewards: Dictionary containing rewards, must include the key 'ori_avg'. gathered_rewards['ori_avg'].shape=(64,) a numpy narray now, not a tensor!
         
     Returns:
         zero_std_ratio: Proportion of prompts with zero standard deviation.
@@ -151,22 +151,22 @@ def calculate_zero_std_ratio(prompts, gathered_rewards):
         prompt_array, 
         return_inverse=True,
         return_counts=True
-    )
+    ) # [8, 8, 32, 8, 8]=counts, 一共5个prompts，分别出现的次数!
     
     # Group rewards for each prompt
     grouped_rewards = gathered_rewards['ori_avg'][np.argsort(inverse_indices)]
     split_indices = np.cumsum(counts)[:-1]
-    reward_groups = np.split(grouped_rewards, split_indices)
+    reward_groups = np.split(grouped_rewards, split_indices) # 把5个prompts的，分别的rewards，放到一个sub-list中 NOTE
     
     # Calculate standard deviation for each group
     prompt_std_devs = np.array([np.std(group) for group in reward_groups])
-    
+    # array([0.14173667, 0.18788542, 0.17885678, 0.34366122, 0.34798527], NOTE 
     # Calculate the ratio of zero standard deviation
     zero_std_count = np.count_nonzero(prompt_std_devs == 0)
     zero_std_ratio = zero_std_count / len(prompt_std_devs)
     
     return zero_std_ratio, prompt_std_devs.mean()
-
+    # 一个prompt的8个reward scores的标准方差是否是0，如果是0，那就没有区分度了!!! prompt_std_devs是对5个prompts的标准方差再求均值，类似于：array([0.14173667, 0.18788542, 0.17885678, 0.34366122, 0.34798527], --> 0.24002507
 def create_generator(prompts, base_seed):
     generators = []
     for prompt in prompts:
@@ -216,7 +216,7 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
     return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
 def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters):
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace() # 测试集合里面有1018行文本prompts，然后目前的batch size=16，所以一共是64个batches 64*16 = 1024 > 1018。NOTE
     if config.train.ema: # True
         ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
     neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings([""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device)
@@ -247,7 +247,7 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
             sample_neg_pooled_prompt_embeds = sample_neg_pooled_prompt_embeds[:len(prompt_embeds)]
         with autocast():
             with torch.no_grad():
-                import ipdb; ipdb.set_trace()
+                #import ipdb; ipdb.set_trace()
                 images, _, _ = pipeline_with_logprob( # NOTE TODO
                     pipeline,
                     prompt_embeds=prompt_embeds, # [16, 205, 4096]
@@ -259,7 +259,7 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
                     output_type="pt",
                     height=config.resolution, # 512
                     width=config.resolution, # 512
-                    noise_level=0,
+                    noise_level=0, # NOTE 这个是核心！noise_level=0代表噪声不起作用
                 ) # 这个文生图的方法，是40步迭代。output images.shape=[16, 3, 512=height, 512=width]
         #import ipdb; ipdb.set_trace()
         # TODO 学习代码的时候，是直接用下面的，可以看清楚reward_fn， ocr，的逻辑细节。' ' -> ''，然后用edit distance来计算图片中识别出来的ocr的文字，和prompt中的“”双引号里面的文本内容进行的对比
@@ -275,7 +275,7 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
             rewards_gather = accelerator.gather(torch.as_tensor(value, device=accelerator.device)).cpu().numpy()
             all_rewards[key].append(rewards_gather)
         break # NOTE TODO for debug only and we only look at one batch
-    import ipdb; ipdb.set_trace() 
+    #import ipdb; ipdb.set_trace() 
     last_batch_images_gather = accelerator.gather(torch.as_tensor(images, device=accelerator.device)).cpu().numpy() # [16, 3, 512, 512]
     last_batch_prompt_ids = tokenizers[0](
         prompts,
@@ -352,7 +352,7 @@ def main(_):
         config.run_name += "_" + unique_id
 
     # number of timesteps within each trajectory to train on
-    num_train_timesteps = int(config.sample.num_steps * config.train.timestep_fraction)
+    num_train_timesteps = int(config.sample.num_steps * config.train.timestep_fraction) # NOTE int(10 * 0.99) = int(9.9) = 9 这个取值后续还用的到!!!
 
     accelerator_config = ProjectConfiguration(
         project_dir=os.path.join(config.logdir, config.run_name),
@@ -486,8 +486,8 @@ def main(_):
     eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn) # ocr: 1.0
 
     if config.prompt_fn == "general_ocr": # True
-        train_dataset = TextPromptDataset(config.dataset, 'train') # config.dataset='/workspace/asr/flow_grpo/dataset/ocr'; <__main__.TextPromptDataset object at 0x7f9ba5127520>
-        test_dataset = TextPromptDataset(config.dataset, 'test') # <__main__.TextPromptDataset object at 0x7f9ba515a7a0>
+        train_dataset = TextPromptDataset(config.dataset, 'train') # config.dataset='/workspace/asr/flow_grpo/dataset/ocr'; 19652+1 lines 最后一行没有换行符号; <__main__.TextPromptDataset object at 0x7f9ba5127520>; len(train_dataset)=19653
+        test_dataset = TextPromptDataset(config.dataset, 'test') # <__main__.TextPromptDataset object at 0x7f9ba515a7a0>; 1017+1 lines, 最后一行没有换行符号; len(test_dataset)=1018
 
         # Create an infinite-loop DataLoader
         train_sampler = DistributedKRepeatSampler( 
@@ -622,14 +622,14 @@ def main(_):
         samples = []
         prompts = []
         for i in tqdm(
-            range(config.sample.num_batches_per_epoch), # 8
+            range(config.sample.num_batches_per_epoch), # 8, 一个epoch里面8个batches? NOTE 一个batch里面是8个文本序列，repeated 实际是一个文本prompt
             desc=f"Epoch {epoch}: sampling",
             disable=not accelerator.is_local_main_process,
             position=0,
         ):
             train_sampler.set_epoch(epoch * config.sample.num_batches_per_epoch + i)
-            prompts, prompt_metadata = next(train_iter) # prompts=a list of 8 textual sequences; prompt_metadata=[{}, {}, {}, {}, {}, {}, {}, {}]
-            import ipdb; ipdb.set_trace()
+            prompts, prompt_metadata = next(train_iter) # prompts=a list of 8 textual sequences; NOTE len(set(prompts))=1, 这是一个prompt复制了8次!!! NOTE TODO TODO TODO ; prompt_metadata=[{}, {}, {}, {}, {}, {}, {}, {}]
+            #import ipdb; ipdb.set_trace()
             prompt_embeds, pooled_prompt_embeds = compute_text_embeddings(
                 prompts, 
                 text_encoders, # 3 encoders
@@ -643,7 +643,7 @@ def main(_):
                 max_length=256,
                 truncation=True,
                 return_tensors="pt",
-            ).input_ids.to(accelerator.device) # [8, 256] 这是只用了最初一个tokenizer
+            ).input_ids.to(accelerator.device) # [8, 256] 这是只用了最初一个tokenizer; prompt_ids[0] = tensor([[49406,   320, 23187,  ..., 49407, 49407, 49407], 49406对应'<|startoftext|>', 然后49407对应'<|endoftext|>'
 
             # sample
             if config.sample.same_latent: # False
@@ -652,9 +652,9 @@ def main(_):
                 generator = None
             with autocast():
                 with torch.no_grad():
-                    import ipdb; ipdb.set_trace()
+                    #import ipdb; ipdb.set_trace()
                     images, latents, log_probs = pipeline_with_logprob( # NOTE TODO
-                        pipeline,
+                        pipeline, # <class 'diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3.StableDiffusion3Pipeline'>
                         prompt_embeds=prompt_embeds, # [8, 205, 4096]
                         pooled_prompt_embeds=pooled_prompt_embeds, # [8, 2048]
                         negative_prompt_embeds=sample_neg_prompt_embeds, # [8, 205, 4096]
@@ -663,45 +663,46 @@ def main(_):
                         guidance_scale=config.sample.guidance_scale, # 4.5
                         output_type="pt",
                         height=config.resolution, # 512
-                        width=config.resolution, 
+                        width=config.resolution, # 512 
                         noise_level=config.sample.noise_level, # 0.7
                         generator=generator # None
-                )
+                        ) # NOTE 这一步是完整的从x_T到x_0的euler-maruyama的解码过程，这里因为noise_level=0.7，所以的确用到了noise, sde了! 返回值: images.shape=[8, 3, 512, 512]，是经过vae.decode之后的真正的image tensor，一个batch一共8张图片； latents=all_latents=a list with T+1=11 noisy image tensors, all_latents[0].shape=[8, 16, 64, 64]; len(all_log_probs)=8 and all_log_probs[0].shape=[8]
 
             latents = torch.stack(
                 latents, dim=1
-            )  # (batch_size, num_steps + 1, 16, 96, 96), e.g., [8, 11, 16, 64, 64]
-            log_probs = torch.stack(log_probs, dim=1)  # shape after stack (batch_size, num_steps), [8, 10]
+            )  # (batch_size, num_steps + 1, 16, 96, 96), e.g., [8, 11, 16, 64, 64], 含义，8=batch size；每个样本下，[11, 16, 64, 64]，包括了11个=T+1个时间步的中间结果noisy images；
+            log_probs = torch.stack(log_probs, dim=1)  # shape after stack (batch_size, num_steps), [8, 10], 10=from T-1 to T-2 to 0, totally T timesteps, 8=batch size
 
             timesteps = pipeline.scheduler.timesteps.repeat(
                 config.sample.train_batch_size, 1
-            )  # (batch_size, num_steps), e.g., [8, 10]
+            )  # (batch_size, num_steps), e.g., [8, 10]; was shape=[10], value=tensor([1000.0000,  960.1293,  913.3490,  857.6923,  790.3683,  707.2785,          602.1506,  464.8760,  278.0488,    8.9286], device='cuda:0'), now copied to 8 and shape=[8, 10], 每个序列的 time scheduler都是一样的
 
             # compute rewards asynchronously
-            rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=True)
+            rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=True) # reward_fn=<function multi_score.<locals>._fn at 0x7f675d7a5fc0>, images.shape=[8, 3, 512, 512], prompts is a list with 8 textual sequences, prompt_metadata=[{}, {}, {}, {}, {}, {}, {}, {}], 
             # yield to to make sure reward computation starts
             time.sleep(0)
 
             samples.append(
                 {
-                    "prompt_ids": prompt_ids, # tensor([[49406,   320, 23187,  ..., 49407, 49407, 49407], [8, 256]
-                    "prompt_embeds": prompt_embeds, # [8, 205, 4096]
+                    "prompt_ids": prompt_ids, # tensor([[49406,   320, 23187,  ..., 49407, 49407, 49407], shape=[8, 256], 当前这个batch的八个文本序列的token id sequence
+                    "prompt_embeds": prompt_embeds, # [8, 205, 4096], 这是经过了三个tokenizers编码之后的prompt的向量表示
                     "pooled_prompt_embeds": pooled_prompt_embeds, # [8, 2048]
-                    "timesteps": timesteps, # [8, 10]
+                    "timesteps": timesteps, # [8, 10], T=10，tensor([[1000.0000,  960.1293,  913.3490,  857.6923,  790.3683,  707.2785,           602.1506,  464.8760,  278.0488,    8.9286],
                     "latents": latents[
                         :, :-1
-                    ],  # each entry is the latent before timestep t
+                    ],  # each entry is the latent before timestep t； [8, 10, 16, 64, 64] 这是去掉了0-th步的最后的noise tensor，剩下的是T, T-1, T-2, ..., 1这T个时间步的noisy images的中间结果，trajectory上的
                     "next_latents": latents[
                         :, 1:
-                    ],  # each entry is the latent after timestep t
-                    "log_probs": log_probs,
-                    "rewards": rewards,
+                    ],  # each entry is the latent after timestep t; [8, 10, 16, 64, 64]这是去掉了T-th步的最初的noise tensor，剩下的是T-1, T-2, ..., 0这T个时间步的noisy images的中间结果，trajectory上的
+                    "log_probs": log_probs, # [8, 10], batch size and T
+                    "rewards": rewards, # rewards = <Future at 0x7f6140412680 state=finished returned tuple>
                 }
             )
+        # done the for loop from Line 624, e.g., for i in range(8)
         import ipdb; ipdb.set_trace()
         # wait for all rewards to be computed
         for sample in tqdm(
-            samples, # 8 batches in total, each batch is with 8 sequences. NOTE
+            samples, # 8 batches in total, each batch is with 8 sequences. NOTE type(samples[0])=dict
             desc="Waiting for rewards",
             disable=not accelerator.is_local_main_process,
             position=0,
@@ -711,7 +712,7 @@ def main(_):
             sample["rewards"] = {
                 key: torch.as_tensor(value, device=accelerator.device).float()
                 for key, value in rewards.items()
-            } # 普通的list，转成了tensor
+            } # 普通的list，转成了tensor; sample['rewards']['ocr'].shape=[8]=sample['rewards']['avg']
 
         # collate samples into dict where each entry has shape (num_batches_per_epoch * sample.batch_size, ...)
         samples = {
@@ -721,9 +722,21 @@ def main(_):
                 sub_key: torch.cat([s[k][sub_key] for s in samples], dim=0)
                 for sub_key in samples[0][k]
             }
-            for k in samples[0].keys()
+            for k in samples[0].keys() # dict_keys(['prompt_ids', 'prompt_embeds', 'pooled_prompt_embeds', 'timesteps', 'latents', 'next_latents', 'log_probs', 'rewards']) 8 keys in total
         } # NOTE 绝了, samples['prompt_ids'].shape=[64, 256]
+        '''
+        prompt_ids torch.Size([64, 256])
+        prompt_embeds torch.Size([64, 205, 4096])
+        pooled_prompt_embeds torch.Size([64, 2048])
+        timesteps torch.Size([64, 10])
+        latents torch.Size([64, 10, 16, 64, 64])
+        next_latents torch.Size([64, 10, 16, 64, 64])
+        log_probs torch.Size([64, 10])
+        rewards ocr torch.Size([64])
+        rewards avg torch.Size([64])
 
+        '''
+        import ipdb; ipdb.set_trace()
         if epoch % 10 == 0 and accelerator.is_main_process:
             # this is a hack to force wandb to log the images as JPEGs instead of PNGs
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -753,12 +766,13 @@ def main(_):
                     },
                     step=global_step,
                 )
-        samples["rewards"]["ori_avg"] = samples["rewards"]["avg"] # shape=[64], 'avg' is same with 'ocr'
+        import ipdb; ipdb.set_trace()
+        samples["rewards"]["ori_avg"] = samples["rewards"]["avg"] # shape=[64], 'avg' is same with 'ocr'; 这是一共64个images的ocr rewards
         # The purpose of repeating `adv` along the timestep dimension here is to make it easier to introduce timestep-dependent advantages later, such as adding a KL reward.
-        samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps) # num_train_timesteps = 9, so samples['rewards']['avg'].shape=[64, 9]
+        samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps) # num_train_timesteps = 9 NOTE , so samples['rewards']['avg'].shape=[64, 9]
         # gather rewards across processes
-        gathered_rewards = {key: accelerator.gather(value) for key, value in samples["rewards"].items()}
-        gathered_rewards = {key: value.cpu().numpy() for key, value in gathered_rewards.items()}
+        gathered_rewards = {key: accelerator.gather(value) for key, value in samples["rewards"].items()} # dict_keys(['ocr', 'avg', 'ori_avg']); 'ocr' : [64], 'avg': [64, 9=T'], and 'ori_avg': [64]
+        gathered_rewards = {key: value.cpu().numpy() for key, value in gathered_rewards.items()} # from gpu tensor to cpu numpy了， shape是一致的
         # log rewards and images
         if accelerator.is_main_process:
             wandb.log(
@@ -775,13 +789,13 @@ def main(_):
             prompt_ids = accelerator.gather(samples["prompt_ids"]).cpu().numpy() # [64, 256]
             prompts = pipeline.tokenizer.batch_decode(
                 prompt_ids, skip_special_tokens=True
-            )
-            advantages = stat_tracker.update(prompts, gathered_rewards['avg']) # [64, 9]
+            ) # a list with 64 textual sequences for 'prompts'
+            advantages = stat_tracker.update(prompts, gathered_rewards['avg']) # [64, 9] type(advantages)=<class 'numpy.ndarray'>, 64=图片数量=prompt数量，9=一共九个时间步了,int(10*0.99)=9了！九个步骤的reward取值是一样的. type(stat_tracker)=<class 'flow_grpo.stat_tracking.PerPromptStatTracker'> NOTE TODO TODO TODO
             if accelerator.is_local_main_process:
                 print("len(prompts)", len(prompts)) # 64
-                print("len unique prompts", len(set(prompts))) # 5
+                print("len unique prompts", len(set(prompts))) # 5 NOTE 哦，有意思，去重之后，剩下5个不一样的文本序列提示了!
 
-            group_size, trained_prompt_num = stat_tracker.get_stats()
+            group_size, trained_prompt_num = stat_tracker.get_stats() # 12.8 and 5 TODO
 
             zero_std_ratio, reward_std_mean = calculate_zero_std_ratio(prompts, gathered_rewards)
 
@@ -804,12 +818,12 @@ def main(_):
         samples["advantages"] = (
             advantages.reshape(accelerator.num_processes, -1, advantages.shape[-1])[accelerator.process_index]
             .to(accelerator.device)
-        )
+        ) # torch.Size([64, 9]) = samples['advantages'].shape
         if accelerator.is_local_main_process:
-            print("advantages: ", samples["advantages"].abs().mean())
+            print("advantages: ", samples["advantages"].abs().mean()) # tensor(0.4875, device='cuda:0', dtype=torch.float64)
 
-        del samples["rewards"]
-        del samples["prompt_ids"]
+        ###del samples["rewards"] # TODO for debug only
+        ###del samples["prompt_ids"] # TODO for debug only
 
         # Get the mask for samples where all advantages are zero across the time dimension
         mask = (samples["advantages"].abs().sum(dim=1) != 0) # [64] all True
@@ -842,10 +856,12 @@ def main(_):
         assert num_timesteps == config.sample.num_steps
 
         #################### TRAINING ####################
+        import ipdb; ipdb.set_trace()
         for inner_epoch in range(config.train.num_inner_epochs): # config.train.num_inner_epochs=1
+            import ipdb; ipdb.set_trace()
             # shuffle samples along batch dimension
-            perm = torch.randperm(total_batch_size, device=accelerator.device) # Returns a random permutation of integers from 0 to n - 1 随机生成一个排列 0 to 63
-            samples = {k: v[perm] for k, v in samples.items()}
+            perm = torch.randperm(total_batch_size, device=accelerator.device) # Returns a random permutation of integers from 0 to n - 1 随机生成一个排列 0 to 63; TODO why? for what?
+            samples = {k: v[perm] for k, v in samples.items()} # TODO Why?
 
             # rebatch for training
             samples_batched = {
@@ -856,19 +872,20 @@ def main(_):
             # dict of lists -> list of dicts for easier iteration
             samples_batched = [
                 dict(zip(samples_batched, x)) for x in zip(*samples_batched.values())
-            ]
+            ] # ipdb> samples_batched[0]['prompt_embeds'].shape = torch.Size([8, 205, 4096])
 
             # train
             pipeline.transformer.train()
             info = defaultdict(list)
+            #import ipdb; ipdb.set_trace()
             for i, sample in tqdm(
                 list(enumerate(samples_batched)),
                 desc=f"Epoch {epoch}.{inner_epoch}: training",
                 position=0,
                 disable=not accelerator.is_local_main_process,
             ):
-                import ipdb; ipdb.set_trace()
-                if config.train.cfg:
+                import ipdb; ipdb.set_trace() # ipdb> sample.keys() = dict_keys(['prompt_embeds', 'pooled_prompt_embeds', 'timesteps', 'latents', 'next_latents', 'log_probs', 'advantages'])
+                if config.train.cfg: # classifier-free guidance, True NOTE
                     # concat negative prompts to sample prompts to avoid two forward passes
                     embeds = torch.cat(
                         [train_neg_prompt_embeds[:len(sample["prompt_embeds"])], sample["prompt_embeds"]]
@@ -880,7 +897,7 @@ def main(_):
                     embeds = sample["prompt_embeds"]
                     pooled_embeds = sample["pooled_prompt_embeds"]
 
-                train_timesteps = [step_index  for step_index in range(num_train_timesteps)]
+                train_timesteps = [step_index  for step_index in range(num_train_timesteps)] # num_train_timesteps=9; train_timesteps=[0, 1, 2, 3, 4, 5, 6, 7, 8]
                 for j in tqdm(
                     train_timesteps, # [0, 1, 2, 3, 4, 5, 6, 7, 8]
                     desc="Timestep",
@@ -888,6 +905,7 @@ def main(_):
                     leave=False,
                     disable=not accelerator.is_local_main_process,
                 ):
+                    import ipdb; ipdb.set_trace()
                     with accelerator.accumulate(transformer):
                         with autocast(): # 在这个代码块里面，PyTorch 自动帮你选择用半精度还是单精度计算。自动判断，更稳定.
                             import ipdb; ipdb.set_trace()

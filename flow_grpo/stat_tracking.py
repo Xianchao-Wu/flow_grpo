@@ -7,28 +7,30 @@ class PerPromptStatTracker:
         self.global_std = global_std
         self.stats = {}
         self.history_prompts = set()
-
-    def update(self, prompts, rewards, type='grpo'):
+    def update(self, prompts, rewards, type='grpo'): # prompts=a list with 64 textual sequences; rewards.shape=(64,9)
+        import ipdb; ipdb.set_trace()
         prompts = np.array(prompts)
         rewards = np.array(rewards, dtype=np.float64)
-        unique = np.unique(prompts)
-        advantages = np.empty_like(rewards)*0.0
+        unique = np.unique(prompts) # 5 unique prompts
+        advantages = np.empty_like(rewards)*0.0 # (64,9) all 0
         for prompt in unique:
-            prompt_rewards = rewards[prompts == prompt]
+            prompt_rewards = rewards[prompts == prompt] # NOTE (8,9) 这是只抽取当前的prompt相关的8个rewards
             if prompt not in self.stats:
                 self.stats[prompt] = []
-            self.stats[prompt].extend(prompt_rewards)
+            else:
+                self.stats[prompt] = self.stats[prompt].tolist()
+            self.stats[prompt].extend(prompt_rewards) # TODO a bug was here
             self.history_prompts.add(hash(prompt))  # Add hash of prompt to history_prompts
         for prompt in unique:
             self.stats[prompt] = np.stack(self.stats[prompt])
             prompt_rewards = rewards[prompts == prompt]  # Fix: Recalculate prompt_rewards for each prompt
-            mean = np.mean(self.stats[prompt], axis=0, keepdims=True)
-            if self.global_std:
-                std = np.std(rewards, axis=0, keepdims=True) + 1e-4  # Use global std of all rewards
+            mean = np.mean(self.stats[prompt], axis=0, keepdims=True) # (8, 9) -> mean -> (1, 9)
+            if self.global_std: # True
+                std = np.std(rewards, axis=0, keepdims=True) + 1e-4  # Use global std of all rewards; rewards.shape=(64,9) -> std -> (1,9)
             else:
                 std = np.std(self.stats[prompt], axis=0, keepdims=True) + 1e-4
-            if type=='grpo':
-                advantages[prompts == prompt] = (prompt_rewards - mean) / std
+            if type=='grpo': # NOTE here
+                advantages[prompts == prompt] = (prompt_rewards - mean) / std # NOTE TODO 这个就是严格按照定义走的!!! shape=(64,9) 只有prompt相关的8个位置上有取值
             elif type=='rwr':
                 # advantages[prompts == prompt] = (prompt_rewards - mean) / std
                 advantages[prompts == prompt] = prompt_rewards

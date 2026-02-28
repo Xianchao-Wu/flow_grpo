@@ -131,7 +131,7 @@ def pipeline_with_logprob(
     self._num_timesteps = len(timesteps) # 40
 
     # 6. Prepare image embeddings
-    all_latents = [latents]
+    all_latents = [latents] # NOTE X_T is appended to "all_latents" (alike the "trajectory")
     all_log_probs = []
     all_prev_latents_mean = []
 
@@ -167,7 +167,7 @@ def pipeline_with_logprob(
                 t.unsqueeze(0), # 3: tensor(1000., device='cuda:0') 注意，这是一个具体的时间点！
                 latents.float(), # 4: [16, 16, 64, 64], former step's noisy image
                 noise_level=noise_level, # 5: 0.7
-            ) # NOTE TODO sde step 'latents' is updated to be the next denoised noisy image tensor! latents=经过sde之后拿到的新的t-1时刻的noisy image, log_prob是对数prob，里面也有mean, variance； prev_latents_mean = x_{t-1}的mean，然后std_dev_t是sqrt(sigma/1-sigma)，也是关于x_t-1的分布的
+            ) # NOTE TODO sde step 'latents' is updated to be the next denoised noisy image tensor! = prev_sample; latents=经过sde之后拿到的新的t-1时刻的noisy image=prev_sample, log_prob是对数prob，里面也有mean, variance的使用； prev_latents_mean = x_{t-1}的mean，然后std_dev_t是noise_level * sqrt(sigma/1-sigma)，也是关于x_t-1的分布p(x_t-1 | x_t, t)的标准方差的一部分，缺少sqrt(-dt)
             
             all_latents.append(latents)
             all_log_probs.append(log_prob)
@@ -190,5 +190,8 @@ def pipeline_with_logprob(
 
     if return_prev_sample_mean: # False
         return image, all_latents, all_log_probs, all_prev_latents_mean
-    return image, all_latents, all_log_probs
-
+    #import ipdb; ipdb.set_trace()
+    return image, all_latents, all_log_probs    
+    # image.shape = [16, 3, 512, 512]
+    # all_latents len=41=from T, T-1, to 0, so totally T+1 tensors in this list! the complete trajectory; all_latents[0].shape=[16, 16, 64, 64]
+    # all_log_probs len=40, from T-1 to ... to 0; all_log_probs[0].shape=[16] which is averaged and only keep the batch size!

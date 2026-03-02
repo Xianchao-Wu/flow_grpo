@@ -431,12 +431,12 @@ def main(_):
             "attn.add_k_proj",
             "attn.add_q_proj",
             "attn.add_v_proj",
-            "attn.to_add_out",
+            "attn.to_add_out", # TODO
             "attn.to_k",
-            "attn.to_out.0",
+            "attn.to_out.0", # TODO
             "attn.to_q",
             "attn.to_v",
-        ]
+        ] # NOTE 具体看model的时候，可以看lora.Linear() 这个下面的都是新增加的lora相关的module
         transformer_lora_config = LoraConfig(
             r=32,
             lora_alpha=64,
@@ -448,7 +448,7 @@ def main(_):
             # After loading with PeftModel.from_pretrained, all parameters have requires_grad set to False. You need to call set_adapter to enable gradients for the adapter parameters.
             pipeline.transformer.set_adapter("default")
         else:
-            pipeline.transformer = get_peft_model(pipeline.transformer, transformer_lora_config) # NOTE okay, add lora adapters to current pipeline.transformer architecture!  18,776,064=18M parameters that are trainable, which is 0.0083 = 0.83% less than 1% of parameters of current pipeline.transformer model! NOTE TODO
+            pipeline.transformer = get_peft_model(pipeline.transformer, transformer_lora_config) # NOTE okay, add lora adapters to current pipeline.transformer architecture!  18,776,064=18M parameters that are trainable, which is 0.0083 = 0.83%, which is less than 1% of parameters of current pipeline.transformer model! NOTE TODO
     
     transformer = pipeline.transformer
     transformer_trainable_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters())) # 382 elements, all with a size of 49152, so the number of trainable parameters is 382 * 49152 = 18,776,064 = 18.7M
@@ -559,7 +559,7 @@ def main(_):
         config.per_prompt_stat_tracking = False
     # initialize stat tracker
     if config.per_prompt_stat_tracking: # True
-        stat_tracker = PerPromptStatTracker(config.sample.global_std) # TODO what for and why state tracker?
+        stat_tracker = PerPromptStatTracker(config.sample.global_std) # TODO okay now! what for and why state tracker? -> 2026 03 02 搞定了，这个是grpo的advantage的计算，(r - mean())/group_std()
 
     # for some reason, autocast is necessary for non-lora training but for lora training it isn't necessary and it uses
     # more memory
@@ -578,7 +578,7 @@ def main(_):
         config.sample.train_batch_size # 8
         * accelerator.num_processes # 1
         * config.sample.num_batches_per_epoch # 8
-    ) # 64, too small... TODO why only 64 batches in one epoch???
+    ) # 64, too small... TODO why only 64 batches in one epoch??? 而且unique prompt的数量<= 8，每个textual prompt有>=8个images。
     total_train_batch_size = (
         config.train.batch_size # 8
         * accelerator.num_processes # 1
@@ -790,12 +790,12 @@ def main(_):
             prompts = pipeline.tokenizer.batch_decode(
                 prompt_ids, skip_special_tokens=True
             ) # a list with 64 textual sequences for 'prompts'
-            advantages = stat_tracker.update(prompts, gathered_rewards['avg']) # [64, 9] type(advantages)=<class 'numpy.ndarray'>, 64=图片数量=prompt数量，9=一共九个时间步了,int(10*0.99)=9了！九个步骤的reward取值是一样的. type(stat_tracker)=<class 'flow_grpo.stat_tracking.PerPromptStatTracker'> NOTE TODO TODO TODO
+            advantages = stat_tracker.update(prompts, gathered_rewards['avg']) # [64, 9] type(advantages)=<class 'numpy.ndarray'>, 64=图片数量=prompt数量，9=一共九个时间步了,int(10*0.99)=9了！九个步骤的reward取值是一样的. type(stat_tracker)=<class 'flow_grpo.stat_tracking.PerPromptStatTracker'> NOTE TODO TODO TODO in file: flow_grpo/stat_tracking.py
             if accelerator.is_local_main_process:
                 print("len(prompts)", len(prompts)) # 64
                 print("len unique prompts", len(set(prompts))) # 5 NOTE 哦，有意思，去重之后，剩下5个不一样的文本序列提示了!
 
-            group_size, trained_prompt_num = stat_tracker.get_stats() # 12.8 and 5 TODO
+            group_size, trained_prompt_num = stat_tracker.get_stats() # group_size=12.8 and trained_prompt_num=5 (unique prompt num，去掉重复的prompt之后的) TODO
 
             zero_std_ratio, reward_std_mean = calculate_zero_std_ratio(prompts, gathered_rewards)
 
@@ -822,9 +822,9 @@ def main(_):
         if accelerator.is_local_main_process:
             print("advantages: ", samples["advantages"].abs().mean()) # tensor(0.4875, device='cuda:0', dtype=torch.float64)
 
-        ###del samples["rewards"] # TODO for debug only
-        ###del samples["prompt_ids"] # TODO for debug only
-
+        del samples["rewards"] # TODO for debug only, a dict: 'ocr': [64], 'avg': [64, 9], 'ori_avg': [64]
+        ###del samples["prompt_ids"] # TODO for debug only, a tensor, shape=[64, 256]
+        import ipdb; ipdb.set_trace()
         # Get the mask for samples where all advantages are zero across the time dimension
         mask = (samples["advantages"].abs().sum(dim=1) != 0) # [64] all True
         
@@ -873,6 +873,17 @@ def main(_):
             samples_batched = [
                 dict(zip(samples_batched, x)) for x in zip(*samples_batched.values())
             ] # ipdb> samples_batched[0]['prompt_embeds'].shape = torch.Size([8, 205, 4096])
+            ''' # the original 8* one unique prompt --> now random order of the 5 prompts in current batch!
+            ipdb> samples_batched[0]['prompt_ids'][:, :4]
+                tensor([[49406,   320, 23187,   267],
+                        [49406,   320, 23187,   267],
+                        [49406,   320, 14270,  2794],
+                        [49406,   320, 23187,   267],
+                        [49406,   320, 12609,  2660],
+                        [49406,   320,  2660,   268],
+                        [49406,   320,  2660,   268],
+                        [49406,   550, 18376,  6446]], device='cuda:0')
+                '''
 
             # train
             pipeline.transformer.train()
@@ -992,7 +1003,7 @@ def main(_):
                         info["loss"].append(loss)
 
                         # backward pass
-                        accelerator.backward(loss)
+                        accelerator.backward(loss) # TODO 每一个time t，都有一次backward???
                         if accelerator.sync_gradients:
                             accelerator.clip_grad_norm_(
                                 transformer.parameters(), config.train.max_grad_norm

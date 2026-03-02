@@ -39,7 +39,7 @@ def pipeline_with_logprob(
 ):
     height = height or self.default_sample_size * self.vae_scale_factor # 512
     width = width or self.default_sample_size * self.vae_scale_factor # 512
-    #import ipdb; ipdb.set_trace()
+    import ipdb; ipdb.set_trace()
     # 1. Check inputs. Raise error if not correct
     self.check_inputs(
         prompt,

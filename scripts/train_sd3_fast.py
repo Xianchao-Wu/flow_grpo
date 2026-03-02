@@ -658,17 +658,17 @@ def main(_):
                         pooled_prompt_embeds=pooled_prompt_embeds,
                         negative_prompt_embeds=sample_neg_prompt_embeds,
                         negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
-                        num_inference_steps=config.sample.num_steps,
+                        num_inference_steps=config.sample.num_steps, # 10
                         guidance_scale=config.sample.guidance_scale,
                         output_type="pt",
                         height=config.resolution,
                         width=config.resolution, 
                         noise_level=config.sample.noise_level,
                         generator=generator,
-                        sde_window_size=config.sample.sde_window_size,
-                        sde_window_range=config.sample.sde_window_range,
-                        sde_type=config.sample.sde_type,
-                )
+                        sde_window_size=config.sample.sde_window_size, # 3 TODO
+                        sde_window_range=config.sample.sde_window_range, # (0, 5) TODO
+                        sde_type=config.sample.sde_type, # 'cps', TODO
+                ) # TODO 目前的采样速度，要快很多了
 
             latents = torch.stack(
                 latents, dim=1
@@ -832,7 +832,7 @@ def main(_):
             )
         # Filter out samples where the entire time dimension of advantages is zero
         samples = {k: v[mask] for k, v in samples.items()}
-
+        # NOTE TODO samples['advantages'].shape=[18, 3]
         total_batch_size, num_timesteps = samples["timesteps"].shape
         # assert (
         #     total_batch_size
@@ -841,7 +841,7 @@ def main(_):
 
         #################### TRAINING ####################
         import ipdb; ipdb.set_trace()
-        for inner_epoch in range(config.train.num_inner_epochs):
+        for inner_epoch in range(config.train.num_inner_epochs): # 1
             # rebatch for training
             samples_batched = {
                 k: v.reshape(-1, total_batch_size//config.sample.num_batches_per_epoch, *v.shape[1:])
@@ -861,7 +861,7 @@ def main(_):
                 desc=f"Epoch {epoch}.{inner_epoch}: training",
                 position=0,
                 disable=not accelerator.is_local_main_process,
-            ):
+            ): # sample.keys()=dict_keys(['prompt_ids', 'prompt_embeds', 'pooled_prompt_embeds', 'timesteps', 'latents', 'next_latents', 'log_probs', 'rewards']); ipdb> sample['prompt_ids'].shape=[9,256]
                 if config.train.cfg:
                     # concat negative prompts to sample prompts to avoid two forward passes
                     embeds = torch.cat(
@@ -871,10 +871,10 @@ def main(_):
                         [train_neg_pooled_prompt_embeds[:len(sample["pooled_prompt_embeds"])], sample["pooled_prompt_embeds"]]
                     )
                 else:
-                    embeds = sample["prompt_embeds"]
-                    pooled_embeds = sample["pooled_prompt_embeds"]
+                    embeds = sample["prompt_embeds"] # NOTE [9, 205, 4096]
+                    pooled_embeds = sample["pooled_prompt_embeds"] # [9, 2048]
 
-                train_timesteps = [step_index  for step_index in range(num_train_timesteps)]
+                train_timesteps = [step_index  for step_index in range(num_train_timesteps)] # [0, 1, 2] TODO NOTE
                 for j in tqdm(
                     train_timesteps,
                     desc="Timestep",

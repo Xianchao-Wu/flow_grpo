@@ -335,7 +335,7 @@ def pickscore_sd3_fast_nocfg():
 
     config.resolution = 512
     config.sample.train_batch_size = 9
-    config.sample.num_image_per_prompt = 18
+    config.sample.num_image_per_prompt = 9 ###18 TODO
     config.sample.num_batches_per_epoch = int(64/(gpu_number*config.sample.train_batch_size/config.sample.num_image_per_prompt))
     config.sample.test_batch_size = 16 # This bs is a special design, the test set has a total of 2212, to make gpu_num*bs*n as close as possible to 2212, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
 

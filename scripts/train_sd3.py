@@ -181,6 +181,7 @@ def create_generator(prompts, base_seed):
 def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config):
     #import ipdb; ipdb.set_trace()
     if config.train.cfg:
+        import ipdb; ipdb.set_trace()
         noise_pred = transformer(
             hidden_states=torch.cat([sample["latents"][:, j]] * 2), # noisy input
             timestep=torch.cat([sample["timesteps"][:, j]] * 2), # timestep
@@ -382,7 +383,7 @@ def main(_):
 
     # set seed (device_specific is very important to get different prompts on different devices)
     set_seed(config.seed, device_specific=True)
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     # load scheduler, tokenizer and models.
     pipeline = StableDiffusion3Pipeline.from_pretrained(
         #config.pretrained.model # 'stabilityai/stable-diffusion-3.5-medium' # TODO NOTE
@@ -394,7 +395,7 @@ def main(_):
     pipeline.text_encoder_2.requires_grad_(False) # 694,659,840 = 694.6M parameters
     pipeline.text_encoder_3.requires_grad_(False) # 4,762,310,656 = 4.7B parameters, which is big
     pipeline.transformer.requires_grad_(not config.use_lora) # 2,243,171,520 = 2.2B parameters, which is alike middle size! NOTE 当使用lora的时候，transformer的参数不需要梯度；如果不使用lora，则transformer的参数是需要梯度的，也就是需要更新transformer中的参数来做grpo！所以说，现在的grpo，就是为了训练下面的这些lora中的low ranker adapter weight matrices的这些参数！ 后续需要知道他们的大小是多少
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     text_encoders = [pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3]
     tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3]
 
@@ -480,7 +481,7 @@ def main(_):
         weight_decay=config.train.adam_weight_decay, # 0.0001
         eps=config.train.adam_epsilon, # 1e-08
     )
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     # prepare prompt and reward fn
     reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn) # ocr: 1.0 <function multi_score.<locals>._fn at 0x7f96d7445f30>
     eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn) # ocr: 1.0
@@ -547,7 +548,7 @@ def main(_):
     else:
         raise NotImplementedError("Only general_ocr is supported with dataset")
 
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings([""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device) # NOTE neg_prompt_embed.shape=[1, 205, 4096], neg_pooled_prompt_embed.shape=[1, 2048]
 
     sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.train_batch_size, 1, 1) # [8, 205, 4096]
@@ -610,13 +611,13 @@ def main(_):
 
     while True:
         #################### EVAL ####################
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
         pipeline.transformer.eval()
         if epoch % config.eval_freq == 0: # 0 % 60 == 0 yes
             eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, eval_reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters)
         if epoch % config.save_freq == 0 and epoch > 0 and accelerator.is_main_process:
             save_ckpt(config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config) # config.save_dir='logs/ocr/sd3.5-M'
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
         #################### SAMPLING ####################
         pipeline.transformer.eval()
         samples = []
@@ -699,7 +700,7 @@ def main(_):
                 }
             )
         # done the for loop from Line 624, e.g., for i in range(8)
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
         # wait for all rewards to be computed
         for sample in tqdm(
             samples, # 8 batches in total, each batch is with 8 sequences. NOTE type(samples[0])=dict
@@ -736,7 +737,7 @@ def main(_):
         rewards avg torch.Size([64])
 
         '''
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
         if epoch % 10 == 0 and accelerator.is_main_process:
             # this is a hack to force wandb to log the images as JPEGs instead of PNGs
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -766,7 +767,7 @@ def main(_):
                     },
                     step=global_step,
                 )
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
         samples["rewards"]["ori_avg"] = samples["rewards"]["avg"] # shape=[64], 'avg' is same with 'ocr'; 这是一共64个images的ocr rewards
         # The purpose of repeating `adv` along the timestep dimension here is to make it easier to introduce timestep-dependent advantages later, such as adding a KL reward.
         samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps) # num_train_timesteps = 9 NOTE , so samples['rewards']['avg'].shape=[64, 9]
@@ -823,8 +824,8 @@ def main(_):
             print("advantages: ", samples["advantages"].abs().mean()) # tensor(0.4875, device='cuda:0', dtype=torch.float64)
 
         del samples["rewards"] # TODO for debug only, a dict: 'ocr': [64], 'avg': [64, 9], 'ori_avg': [64]
-        ###del samples["prompt_ids"] # TODO for debug only, a tensor, shape=[64, 256]
-        import ipdb; ipdb.set_trace()
+        del samples["prompt_ids"] # TODO for debug only, a tensor, shape=[64, 256]
+        #import ipdb; ipdb.set_trace()
         # Get the mask for samples where all advantages are zero across the time dimension
         mask = (samples["advantages"].abs().sum(dim=1) != 0) # [64] all True
         
@@ -856,9 +857,9 @@ def main(_):
         assert num_timesteps == config.sample.num_steps
 
         #################### TRAINING ####################
-        import ipdb; ipdb.set_trace()
+        #import ipdb; ipdb.set_trace()
         for inner_epoch in range(config.train.num_inner_epochs): # config.train.num_inner_epochs=1
-            import ipdb; ipdb.set_trace()
+            #import ipdb; ipdb.set_trace()
             # shuffle samples along batch dimension
             perm = torch.randperm(total_batch_size, device=accelerator.device) # Returns a random permutation of integers from 0 to n - 1 随机生成一个排列 0 to 63; TODO why? for what?
             samples = {k: v[perm] for k, v in samples.items()} # TODO Why?
@@ -919,7 +920,7 @@ def main(_):
                     import ipdb; ipdb.set_trace()
                     with accelerator.accumulate(transformer):
                         with autocast(): # 在这个代码块里面，PyTorch 自动帮你选择用半精度还是单精度计算。自动判断，更稳定.
-                            import ipdb; ipdb.set_trace()
+                            #import ipdb; ipdb.set_trace()
                             prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config) # transformer=<class 'peft.peft_model.PeftModel'>, diffusion.model.pipeline, NOTE 
                             if config.train.beta > 0:
                                 with torch.no_grad():
@@ -930,7 +931,7 @@ def main(_):
                                     with base_model.disable_adapter(): # NOTE 不用lora adapters是区分的关键了！！！ 这个非常重要
                                         _, _, prev_sample_mean_ref, _ = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config) # NOTE TODO why same inputs as line 894??? --> 因为这里禁止了adapter的使用了，从而transformer/pipeline都回到了最初的样子了!!! TODO 没有看到disable_adapter的效果啊，因为prev_sample_mean 和prev_sample_mean_ref是一样的取值... why? prev_sample_mean == prev_sample_mean_ref is true... ipdb> alist = list(transformer.base_model.model.transformer_blocks[0].attn.to_q.lora_A.parameters()) 有意思，这里是有取值的!!! NOTE
 
-                        import ipdb; ipdb.set_trace()
+                        #import ipdb; ipdb.set_trace()
                         '''
                         ipdb> sample['advantages'] output of OCR edit distance, same for all the 9 steps...?
                         tensor([[-0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461, -0.2461,
@@ -964,7 +965,7 @@ def main(_):
                             1.0 + config.train.clip_range,
                         )
                         policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                        if config.train.beta > 0: # 0.04， KL的系数 beta
+                        if config.train.beta > 0: # 0.04， KL的系数 beta NOTE TODO shall we set beta = f(timestep, iteration)?
                             kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
                             kl_loss = torch.mean(kl_loss)
                             loss = policy_loss + config.train.beta * kl_loss # NOTE TODO 这个很重要, tensor(-0.1237, device='cuda:0', dtype=torch.float64, grad_fn=<AddBackward0>)

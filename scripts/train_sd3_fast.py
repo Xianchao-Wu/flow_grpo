@@ -79,16 +79,16 @@ class GenevalPromptDataset(Dataset):
 class DistributedKRepeatSampler(Sampler):
     def __init__(self, dataset, batch_size, k, num_replicas, rank, seed=0):
         self.dataset = dataset
-        self.batch_size = batch_size  # Batch size per replica
-        self.k = k                    # Number of repetitions per sample
-        self.num_replicas = num_replicas  # Total number of replicas
-        self.rank = rank              # Current replica rank
+        self.batch_size = batch_size  # Batch size per replica; 9
+        self.k = k                    # Number of repetitions per sample, 18 --> 9
+        self.num_replicas = num_replicas  # Total number of replicas, 1
+        self.rank = rank              # Current replica ran, 18k; rank=0
         self.seed = seed              # Random seed for synchronization
         
         # Compute the number of unique samples needed per iteration
-        self.total_samples = self.num_replicas * self.batch_size
+        self.total_samples = self.num_replicas * self.batch_size # 1 * 9 = 9
         assert self.total_samples % self.k == 0, f"k can not divide n*b, k{k}-num_replicas{num_replicas}-batch_size{batch_size}"
-        self.m = self.total_samples // self.k  # Number of unique samples
+        self.m = self.total_samples // self.k  # Number of unique samples, 1=9//9
         self.epoch = 0
 
     def __iter__(self):
@@ -268,6 +268,7 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
         for key, value in rewards.items():
             rewards_gather = accelerator.gather(torch.as_tensor(value, device=accelerator.device)).cpu().numpy()
             all_rewards[key].append(rewards_gather)
+        break ## TODO for debug only
     
     last_batch_images_gather = accelerator.gather(torch.as_tensor(images, device=accelerator.device)).cpu().numpy()
     last_batch_prompt_ids = tokenizers[0](
@@ -337,7 +338,7 @@ def save_ckpt(save_dir, transformer, global_step, accelerator, ema, transformer_
 def main(_):
     # basic Accelerate and logging setup
     config = FLAGS.config
-
+    import ipdb; ipdb.set_trace()
     unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
     if not config.run_name:
         config.run_name = unique_id
@@ -378,10 +379,12 @@ def main(_):
 
     # set seed (device_specific is very important to get different prompts on different devices)
     set_seed(config.seed, device_specific=True)
-
+    
+    import ipdb; ipdb.set_trace()
     # load scheduler, tokenizer and models.
     pipeline = StableDiffusion3Pipeline.from_pretrained(
-        config.pretrained.model
+        #config.pretrained.model
+        '/workspace/asr/flow_grpo/ckpts/models--stabilityai--stable-diffusion-3.5-medium/snapshots/b940f670f0eda2d07fbb75229e779da1ad11eb80',
     )
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
@@ -444,9 +447,9 @@ def main(_):
             pipeline.transformer.set_adapter("default")
         else:
             pipeline.transformer = get_peft_model(pipeline.transformer, transformer_lora_config)
-    
+    import ipdb; ipdb.set_trace() 
     transformer = pipeline.transformer
-    transformer_trainable_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters()))
+    transformer_trainable_parameters = list(filter(lambda p: p.requires_grad, transformer.parameters())) # NOTE trainable=18,776,064=18MB, all=2,261,947,584=2.2B ; rate=0.83%
     # This ema setting affects the previous 20 × 8 = 160 steps on average.
     ema = EMAModuleWrapper(transformer_trainable_parameters, decay=0.9, update_step_interval=8, device=accelerator.device)
     
@@ -477,20 +480,20 @@ def main(_):
     )
 
     # prepare prompt and reward fn
-    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn)
-    eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn)
-
-    if config.prompt_fn == "general_ocr":
-        train_dataset = TextPromptDataset(config.dataset, 'train')
-        test_dataset = TextPromptDataset(config.dataset, 'test')
+    reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn) # reward_fn=<function multi_score.<locals>._fn at 0x7fd8c86997e0>; config.reward_fn=pickscore: 1.0
+    eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn) # <function multi_score.<locals>._fn at 0x7fd890c03640>
+    import ipdb; ipdb.set_trace()
+    if config.prompt_fn == "general_ocr": # NOTE here
+        train_dataset = TextPromptDataset(config.dataset, 'train') # /workspace/asr/flow_grpo/dataset/pickscore; 25432 lines
+        test_dataset = TextPromptDataset(config.dataset, 'test') # 2048 lines
 
         # Create an infinite-loop DataLoader
         train_sampler = DistributedKRepeatSampler( 
-            dataset=train_dataset,
-            batch_size=config.sample.train_batch_size,
-            k=config.sample.num_image_per_prompt,
-            num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index,
+            dataset=train_dataset, # <__main__.TextPromptDataset object at 0x7f5994284460>
+            batch_size=config.sample.train_batch_size, # 9
+            k=config.sample.num_image_per_prompt, # 18 --> 9
+            num_replicas=accelerator.num_processes, # 1
+            rank=accelerator.process_index, # 0
             seed=42
         )
 
@@ -509,7 +512,7 @@ def main(_):
             batch_size=config.sample.test_batch_size,
             collate_fn=TextPromptDataset.collate_fn,
             shuffle=False,
-            num_workers=8,
+            num_workers=1, ###8, TODO for debug only, now use 1
         )
     
     elif config.prompt_fn == "geneval":
@@ -541,7 +544,7 @@ def main(_):
         )
     else:
         raise NotImplementedError("Only general_ocr is supported with dataset")
-
+    import ipdb; ipdb.set_trace() 
 
     neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings([""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device)
 
@@ -554,7 +557,7 @@ def main(_):
         config.per_prompt_stat_tracking = False
     # initialize stat tracker
     if config.per_prompt_stat_tracking:
-        stat_tracker = PerPromptStatTracker(config.sample.global_std)
+        stat_tracker = PerPromptStatTracker(config.sample.global_std) # NOTE here
 
     # for some reason, autocast is necessary for non-lora training but for lora training it isn't necessary and it uses
     # more memory
@@ -570,15 +573,15 @@ def main(_):
 
     # Train!
     samples_per_epoch = (
-        config.sample.train_batch_size
-        * accelerator.num_processes
-        * config.sample.num_batches_per_epoch
-    )
+        config.sample.train_batch_size # 9
+        * accelerator.num_processes # 1
+        * config.sample.num_batches_per_epoch # 2
+    ) # 18
     total_train_batch_size = (
-        config.train.batch_size
-        * accelerator.num_processes
-        * config.train.gradient_accumulation_steps
-    )
+        config.train.batch_size # 9
+        * accelerator.num_processes # 1
+        * config.train.gradient_accumulation_steps # 1
+    ) # 9
 
     logger.info("***** Running training *****")
     logger.info(f"  Sample batch size per device = {config.sample.train_batch_size}")
@@ -607,6 +610,7 @@ def main(_):
         #################### EVAL ####################
         pipeline.transformer.eval()
         if epoch % config.eval_freq == 0:
+            import ipdb; ipdb.set_trace()
             eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, eval_reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters)
         if epoch % config.save_freq == 0 and epoch > 0 and accelerator.is_main_process:
             save_ckpt(config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config)
@@ -624,6 +628,7 @@ def main(_):
             train_sampler.set_epoch(epoch * config.sample.num_batches_per_epoch + i)
             prompts, prompt_metadata = next(train_iter)
 
+            import ipdb; ipdb.set_trace()
             prompt_embeds, pooled_prompt_embeds = compute_text_embeddings(
                 prompts, 
                 text_encoders, 
@@ -646,6 +651,7 @@ def main(_):
                 generator = None
             with autocast():
                 with torch.no_grad():
+                    import ipdb; ipdb.set_trace()
                     images, latents, log_probs, timesteps = pipeline_with_logprob(
                         pipeline,
                         prompt_embeds=prompt_embeds,
@@ -691,6 +697,7 @@ def main(_):
                 }
             )
 
+        import ipdb; ipdb.set_trace()
         # wait for all rewards to be computed
         for sample in tqdm(
             samples,
@@ -833,6 +840,7 @@ def main(_):
         # )
 
         #################### TRAINING ####################
+        import ipdb; ipdb.set_trace()
         for inner_epoch in range(config.train.num_inner_epochs):
             # rebatch for training
             samples_batched = {
@@ -880,6 +888,7 @@ def main(_):
                             if config.train.beta > 0:
                                 with torch.no_grad():
                                     with transformer.module.disable_adapter():
+                                        import ipdb; ipdb.set_trace()
                                         _, _, prev_sample_mean_ref, _ = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config)
 
                         # grpo logic

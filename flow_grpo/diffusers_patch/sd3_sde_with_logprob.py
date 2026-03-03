@@ -33,7 +33,7 @@ def sde_step_with_logprob(
             A random number generator.
     """
     # bf16 can overflow here when compute prev_sample_mean, we must convert all variable to fp32
-    #import ipdb; ipdb.set_trace()
+    import ipdb; ipdb.set_trace()
     model_output=model_output.float() # 来自现在timestep时刻的flow matching model的预测结果，noisy image
     sample=sample.float() # NOTE TODO ? 输入, sample + t --> self.transformer --> model_output/velocity
     if prev_sample is not None:
@@ -74,10 +74,15 @@ def sde_step_with_logprob(
         # logp = -(x-mu)^2/(2*sigma^2) - log(sigma) - 1/2*log(2*pi), here, mu=prev_sample_mean, sigma=std_dev_t * sqrt(-dt) NOTE
         # NOTE std_dev_t=0, so log_prob=nan, TODO shall we do something???
     elif sde_type == 'cps': # consistency policy sampling (cps)
-        std_dev_t = sigma_prev  * math.sin(noise_level * math.pi / 2) # sigma_t in paper
-        pred_original_sample = sample - sigma * model_output # predicted x_0 in paper
-        noise_estimate = sample + model_output * (1 - sigma) # predicted x_1 in paper
-        prev_sample_mean = pred_original_sample * (1 - sigma_prev) + noise_estimate * torch.sqrt(sigma_prev**2 - std_dev_t**2)
+        import ipdb; ipdb.set_trace()
+        std_dev_t = sigma_prev  * math.sin(noise_level * math.pi / 2) # sigma_t in paper arxiv:2509.05952's 公式13的上方，关于sigma_t的定义, sigma_t = (t - delta t) sin(eta * pi / 2), (t - delta t)=sigma_prev; eta=noise_level NOTE
+        pred_original_sample = sample - sigma * model_output # predicted x_0 in paper, 公式9里面的，predicted x_0 = x_t - t * v_theta(x_t, t), 对应关系：x_t = sample, 即当前的noisy image, t=sigma, v_theta(x_t, t)=volecity field predicted=model_output NOTE
+        noise_estimate = sample + model_output * (1 - sigma) # predicted x_1 in paper, 公式9里面的
+        is_use_true_cps = True # NOTE
+        if is_use_true_cps:
+            prev_sample_mean = pred_original_sample * (1 - sigma_prev) + noise_estimate * sigma_prev * math.cos(noise_level * math.pi / 2) #torch.sqrt(sigma_prev**2 - std_dev_t**2) # 公式13的等式右边的，前两项
+        else:
+            prev_sample_mean = pred_original_sample * (1 - sigma_prev) + noise_estimate * torch.sqrt(sigma_prev**2 - std_dev_t**2) # 公式12的等式右边的，前两项
 
         if prev_sample is None:
             variance_noise = randn_tensor(
@@ -86,10 +91,10 @@ def sde_step_with_logprob(
                 device=model_output.device,
                 dtype=model_output.dtype,
             )
-            prev_sample = prev_sample_mean + std_dev_t * variance_noise
+            prev_sample = prev_sample_mean + std_dev_t * variance_noise # 公式12的完整使用
 
         # remove all constants
-        log_prob = -((prev_sample.detach() - prev_sample_mean) ** 2)
+        log_prob = -((prev_sample.detach() - prev_sample_mean) ** 2) # NOTE 公式15的完整使用
     #import ipdb; ipdb.set_trace()
     # mean along all but batch dimension
     log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim))) # torch.Size([16]), batch_size=16, tensor([nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan], ... since std_dev_t=0 ... 

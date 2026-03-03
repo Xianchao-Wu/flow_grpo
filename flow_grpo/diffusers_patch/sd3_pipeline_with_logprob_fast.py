@@ -40,6 +40,7 @@ def pipeline_with_logprob(
     sde_window_range: tuple[int, int] = (0, 5),
     sde_type: Optional[str] = 'sde',
 ):
+    import ipdb; ipdb.set_trace()
     height = height or self.default_sample_size * self.vae_scale_factor
     width = width or self.default_sample_size * self.vae_scale_factor
 
@@ -79,7 +80,7 @@ def pipeline_with_logprob(
 
     lora_scale = (
         self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
-    )
+    ) # None
     (
         prompt_embeds,
         negative_prompt_embeds,
@@ -103,7 +104,7 @@ def pipeline_with_logprob(
         max_sequence_length=max_sequence_length,
         lora_scale=lora_scale,
     )
-    if self.do_classifier_free_guidance:
+    if self.do_classifier_free_guidance: # NOTE False
         prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
         pooled_prompt_embeds = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
 
@@ -148,27 +149,28 @@ def pipeline_with_logprob(
 
     # 7. Denoising loop
     with self.progress_bar(total=num_inference_steps) as progress_bar:
-        for i, t in enumerate(timesteps):
+        for i, t in enumerate(timesteps): # tensor([1000.0000,  960.1293,  913.3490,  857.6923,  790.3683,  707.2785,          602.1506,  464.8760,  278.0488,    8.9286], device='cuda:0') timesteps.shape=[10]
             if i < sde_window[0]:
                 cur_noise_level = 0
             elif i == sde_window[0]:
                 cur_noise_level= noise_level
-                all_latents.append(latents)
+                all_latents.append(latents) # latents.shape=[9, 16, 64, 64]
             elif i > sde_window[0] and i < sde_window[1]:
                 cur_noise_level = noise_level
             else:
                 cur_noise_level= 0
-
+            print(i, t, cur_noise_level) # NOTE 当cur_noise_level=0的时候，表示sde没有用，退化成了sde NOTE 有意思
+            # 也就是说，只有在i在sde_window=(2,5)之内的时候，2<=i<5, i=2, i=3, i=4三个timestep下，是有sde的noise的.
             # expand the latents if we are doing classifier free guidance
-            latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
+            latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents # False!!!
             # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
             timestep = t.expand(latent_model_input.shape[0])
-            noise_pred = self.transformer(
-                hidden_states=latent_model_input,
-                timestep=timestep,
-                encoder_hidden_states=prompt_embeds,
-                pooled_projections=pooled_prompt_embeds,
-                joint_attention_kwargs=self.joint_attention_kwargs,
+            noise_pred = self.transformer( # <class 'peft.peft_model.PeftModel'>late NOTE 注意，这里是一步去噪！！
+                hidden_states=latent_model_input, # [9, 16, 64, 64]
+                timestep=timestep, # [10] with 10 time steps of the same value TODO tensor([1000., 1000., 1000., 1000., 1000., 1000., 1000., 1000., 1000.],
+                encoder_hidden_states=prompt_embeds, # prompt_embeds.shape=[9, 205, 4096]
+                pooled_projections=pooled_prompt_embeds, # [9, 2048]
+                joint_attention_kwargs=self.joint_attention_kwargs, # None
                 return_dict=False,
             )[0]
             # noise_pred = noise_pred.to(prompt_embeds.dtype)
@@ -180,18 +182,18 @@ def pipeline_with_logprob(
             latents_dtype = latents.dtype
 
             latents, log_prob, prev_latents_mean, std_dev_t = sde_step_with_logprob(
-                self.scheduler, 
-                noise_pred.float(), 
-                t.unsqueeze(0), 
-                latents.float(),
-                noise_level=cur_noise_level,
+                self.scheduler, # FlowMatchEulerDiscreteScheduler
+                noise_pred.float(), # torch.Size([9, 16, 64, 64])
+                t.unsqueeze(0), # 一个具体的时间，例如t=1000.0
+                latents.float(), # torch.Size([9, 16, 64, 64])
+                noise_level=cur_noise_level, # 0.8
                 sde_type=sde_type,
             )
             
             # if latents.dtype != latents_dtype:
             #     latents = latents.to(latents_dtype)
             if i >= sde_window[0] and i < sde_window[1]:
-                all_latents.append(latents)
+                all_latents.append(latents) # NOTE 只有sde steps的latents输入，才被保存到all_latents数组中
                 all_log_probs.append(log_prob)
                 all_timesteps.append(t)
             # call the callback, if provided
